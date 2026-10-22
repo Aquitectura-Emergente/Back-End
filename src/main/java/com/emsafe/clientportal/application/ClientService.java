@@ -44,11 +44,6 @@ public class ClientService {
     /** Threshold (µT) above which radiation is considered to exceed the safe limit. */
     private static final double SAFETY_THRESHOLD = RadiationLevel.DANGER_UT;
 
-    /** Smart-edge classification — delegates to the shared helper (edge is the source of truth). */
-    private static String levelOf(RadiationReading r) {
-        return RadiationLevel.of(r);
-    }
-
     // ─── Profile ────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
@@ -126,12 +121,9 @@ public class ClientService {
      */
     @Transactional
     public ClientDeviceDto setDesiredPlug(Long clientId, Long deviceId, String plug) {
-        if (plug == null || !(plug.equalsIgnoreCase("ON") || plug.equalsIgnoreCase("OFF"))) {
-            throw new BadRequestException("plug must be ON or OFF");
-        }
         Device d = deviceRepository.findByIdAndClient_Id(deviceId, clientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
-        d.setDesiredPlug(plug.toUpperCase());
+        d.requestPlug(plug);
         deviceRepository.save(d);
         return toDeviceDto(d, radiationReadingRepository.findByDeviceIdWithDevice(deviceId));
     }
@@ -163,17 +155,13 @@ public class ClientService {
         // any single spike, which reads as "high average but green level").
         LocalDateTime avgCutoff = LocalDateTime.now().minusHours(24);
         List<RadiationReading> recent = readings.stream()
-                .filter(r -> readingTs(r).isAfter(avgCutoff))
+                .filter(r -> r.timestamp().isAfter(avgCutoff))
                 .toList();
         double avg = recent.isEmpty() ? 0.0
                 : round3(recent.stream().mapToDouble(RadiationReading::getValue).average().orElse(0.0));
         double max = readings.stream().mapToDouble(RadiationReading::getValue).max().orElse(0.0);
-        int activeCount = (int) devices.stream()
-                .filter(d -> "active".equalsIgnoreCase(d.getStatus()))
-                .count();
-        int alertCount = (int) readings.stream()
-                .filter(r -> !"safe".equals(levelOf(r)))
-                .count();
+        int activeCount = (int) devices.stream().filter(Device::isActive).count();
+        int alertCount = (int) readings.stream().filter(RadiationReading::isAlert).count();
 
         // readings already come sorted DESC by recordedAt (most recent first)
         List<ClientReadingDto> latest = readings.stream()
@@ -241,8 +229,7 @@ public class ClientService {
                             .mapToDouble(RadiationReading::getValue).average().orElse(0);
                     double peak = group.stream()
                             .mapToDouble(RadiationReading::getValue).max().orElse(0);
-                    int alerts = (int) group.stream()
-                            .filter(r -> !"safe".equals(levelOf(r))).count();
+                    int alerts = (int) group.stream().filter(RadiationReading::isAlert).count();
                     return new ClientReportDto.Bucket(
                             e.getKey(), round3(avg), round3(peak), group.size(), alerts);
                 })
@@ -252,8 +239,7 @@ public class ClientService {
                 .mapToDouble(RadiationReading::getValue).average().orElse(0);
         double peak = readings.stream()
                 .mapToDouble(RadiationReading::getValue).max().orElse(0);
-        int alerts = (int) readings.stream()
-                .filter(r -> !"safe".equals(levelOf(r))).count();
+        int alerts = (int) readings.stream().filter(RadiationReading::isAlert).count();
 
         return new ClientReportDto(
                 yearly ? "year" : "month",
@@ -265,10 +251,10 @@ public class ClientService {
     @Transactional(readOnly = true)
     public List<ClientAlertDto> getAlerts(Long clientId) {
         return radiationReadingRepository.findByClientIdWithDevice(clientId).stream()
-                .filter(r -> !"safe".equals(levelOf(r)))
-                .sorted(Comparator.comparing(ClientService::readingTs).reversed())
+                .filter(RadiationReading::isAlert)
+                .sorted(Comparator.comparing(RadiationReading::timestamp).reversed())
                 .map(r -> {
-                    String lvl = levelOf(r);
+                    String lvl = r.level();
                     String deviceName = r.getDevice() != null ? r.getDevice().getName() : "Sensor";
                     return new ClientAlertDto(
                             r.getId(),
@@ -297,14 +283,7 @@ public class ClientService {
     }
 
     private ClientDeviceDto toDeviceDto(Device d, List<RadiationReading> deviceReadings) {
-        // Prefer the precise timestamp (recordedAt) — with the edge sending several
-        // readings per day, readingDate alone can't tell which one is the latest.
-        RadiationReading latest = deviceReadings.stream()
-                .filter(r -> r.getRecordedAt() != null || r.getReadingDate() != null)
-                .max(Comparator.comparing(r -> r.getRecordedAt() != null
-                        ? r.getRecordedAt()
-                        : r.getReadingDate().atStartOfDay()))
-                .orElse(null);
+        RadiationReading latest = RadiationReading.latestOf(deviceReadings);
         Double latestVal = latest != null ? latest.getValue() : null;
         return new ClientDeviceDto(
                 d.getId(),
@@ -315,7 +294,7 @@ public class ClientService {
                 d.getSerialNumber(),
                 d.getInstallDate() != null ? d.getInstallDate().toString() : null,
                 latestVal,
-                latest != null ? levelOf(latest) : null,
+                latest != null ? latest.level() : null,
                 latest != null && latest.getReadingDate() != null ? latest.getReadingDate().toString() : null,
                 deviceReadings.size(),
                 latest != null ? latest.getPlug() : null,
@@ -327,18 +306,12 @@ public class ClientService {
         return new ClientReadingDto(
                 r.getId(),
                 r.getValue(),
-                levelOf(r),
+                r.level(),
                 r.getReadingDate() != null ? r.getReadingDate().toString() : null,
                 r.getRecordedAt() != null ? r.getRecordedAt().toString() : null,
                 r.getDevice() != null ? r.getDevice().getId() : null,
                 r.getDevice() != null ? r.getDevice().getName() : null
         );
-    }
-
-    /** Best-effort timestamp for a reading: precise recordedAt, else start of its date. */
-    private static LocalDateTime readingTs(RadiationReading r) {
-        if (r.getRecordedAt() != null) return r.getRecordedAt();
-        return r.getReadingDate() != null ? r.getReadingDate().atStartOfDay() : LocalDateTime.MIN;
     }
 
     private double round3(double v) {

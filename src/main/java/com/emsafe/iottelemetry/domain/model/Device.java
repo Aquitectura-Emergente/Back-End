@@ -1,6 +1,7 @@
 package com.emsafe.iottelemetry.domain.model;
 
 import com.emsafe.iam.domain.model.AppUser;
+import com.emsafe.shared.exception.BadRequestException;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -74,6 +75,22 @@ public class Device {
 
     public boolean isUnregistered() {
         return DeviceStatus.isUnregistered(status);
+    }
+
+    public boolean isActive() {
+        return DeviceStatus.ACTIVE.equalsIgnoreCase(status);
+    }
+
+    /**
+     * El usuario ordena abrir o cerrar el relé desde la app. Se guarda como
+     * estado DESEADO: el edge lo consulta en cada ciclo y lo aplica al
+     * dispositivo físico. Solo ON y OFF son órdenes válidas.
+     */
+    public void requestPlug(String plug) {
+        if (plug == null || !(plug.equalsIgnoreCase("ON") || plug.equalsIgnoreCase("OFF"))) {
+            throw new BadRequestException("plug must be ON or OFF");
+        }
+        this.desiredPlug = plug.toUpperCase();
     }
 
     /**

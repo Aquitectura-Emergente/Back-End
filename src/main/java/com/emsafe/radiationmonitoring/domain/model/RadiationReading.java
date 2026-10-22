@@ -57,4 +57,41 @@ public class RadiationReading {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "device_id")
     private Device device;
+
+    // ─── Comportamiento del agregado ──────────────────────────────────────────
+
+    /**
+     * Nivel de la lectura, respetando siempre el que calculó el edge.
+     *
+     * Importar aquí el servicio de dominio es deliberado: que el agregado
+     * responda {@code r.level()} evita que cada consumidor tenga que acordarse
+     * de llamar al clasificador, que es justo como se cuelan las
+     * reclasificaciones accidentales en el backend.
+     */
+    public String level() {
+        return com.emsafe.radiationmonitoring.domain.services.RadiationLevel.of(this);
+    }
+
+    /** Una lectura es alerta cuando su nivel deja de ser "safe". */
+    public boolean isAlert() {
+        return !"safe".equals(level());
+    }
+
+    /**
+     * Momento al que pertenece la medición. Se prefiere recordedAt, que es
+     * preciso: con el edge enviando varias lecturas al día, readingDate por sí
+     * solo no distingue cuál es la última.
+     */
+    public LocalDateTime timestamp() {
+        if (recordedAt != null) return recordedAt;
+        return readingDate != null ? readingDate.atStartOfDay() : LocalDateTime.MIN;
+    }
+
+    /** La lectura más reciente de un conjunto, o null si no hay ninguna fechada. */
+    public static RadiationReading latestOf(java.util.List<RadiationReading> readings) {
+        return readings.stream()
+                .filter(r -> r.getRecordedAt() != null || r.getReadingDate() != null)
+                .max(java.util.Comparator.comparing(RadiationReading::timestamp))
+                .orElse(null);
+    }
 }

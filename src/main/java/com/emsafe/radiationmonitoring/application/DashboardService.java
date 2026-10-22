@@ -10,6 +10,7 @@ import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.alerts.infrastructure.persistence.AlertRepository;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
 import com.emsafe.radiationmonitoring.domain.services.RadiationLevel;
+import com.emsafe.iam.domain.model.AppUser;
 import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
 import com.emsafe.fieldservice.domain.model.WorkOrderStatus;
@@ -38,7 +39,7 @@ public class DashboardService {
     public StatsDto getStats() {
         long pending = workOrderRepository.countByStatus(WorkOrderStatus.PENDING);
         long activeClients = userRepository.findByRole(Role.CLIENT).stream()
-                .filter(u -> "active".equalsIgnoreCase(u.getStatus()))
+                .filter(AppUser::isActive)
                 .count();
         long criticalAlerts = alertRepository.countByType("danger");
         long totalSensors = sensorRepository.count();

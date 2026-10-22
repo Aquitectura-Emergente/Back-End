@@ -43,7 +43,7 @@ public class AppUser {
 
     @Column(nullable = false, length = 20)
     @Builder.Default
-    private String status = "active";
+    private String status = UserStatus.ACTIVE;
 
     @Column(length = 100)
     private String specialty;
@@ -91,4 +91,15 @@ public class AppUser {
 
     @Column(name = "contact_phone", length = 30)
     private String contactPhone;
+
+    // ─── Comportamiento del agregado ──────────────────────────────────────────
+
+    /** Cuenta habilitada. Distinto del estado de un dispositivo, pese al nombre. */
+    public boolean isActive() {
+        return UserStatus.ACTIVE.equalsIgnoreCase(status);
+    }
+
+    public boolean hasRole(Role expected) {
+        return role == expected;
+    }
 }
