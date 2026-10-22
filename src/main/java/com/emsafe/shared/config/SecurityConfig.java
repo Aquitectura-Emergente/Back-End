@@ -1,6 +1,6 @@
 package com.emsafe.shared.config;
 
-import com.emsafe.auth.security.JwtAuthFilter;
+import com.emsafe.iam.infrastructure.security.JwtAuthFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
