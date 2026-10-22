@@ -41,39 +41,25 @@ public class WorkOrderService {
 
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("hh:mm a");
 
-    /** Active work orders shown in the admin/tech lists (Completed/Cancelled live only in History). */
-    private static final List<WorkOrderStatus> ACTIVE_STATUSES =
-            List.of(WorkOrderStatus.PENDING, WorkOrderStatus.IN_PROGRESS);
-
     // ─── Admin endpoints ───────────────────────────────────────────────────────
 
     public PageResponse<WorkOrderDto> findAllPaged(String status, String type, String search, String sort, int page, int size) {
-        List<WorkOrderStatus> statuses = resolveStatuses(status);
-        WorkOrderType typeEnum = parseType(type);
-        String searchTerm = StringUtils.hasText(search) ? search : null;
         Pageable pageable = PageRequest.of(page, size, buildSort(sort));
-        return PageResponse.of(workOrderRepository.searchPaged(statuses, typeEnum, searchTerm, pageable)
+        return PageResponse.of(workOrderRepository.searchPaged(
+                        WorkOrderStatus.activeFilter(status),
+                        WorkOrderType.fromFilter(type),
+                        StringUtils.hasText(search) ? search : null,
+                        pageable)
                 .map(WorkOrderDto::from));
     }
 
     public List<WorkOrderDto> findAll(String status, String type, String search, String sort) {
-        List<WorkOrderStatus> statuses = resolveStatuses(status);
-        WorkOrderType typeEnum = parseType(type);
-        String searchTerm = StringUtils.hasText(search) ? search : null;
-
-        return workOrderRepository.search(statuses, typeEnum, searchTerm, buildSort(sort))
+        return workOrderRepository.search(
+                        WorkOrderStatus.activeFilter(status),
+                        WorkOrderType.fromFilter(type),
+                        StringUtils.hasText(search) ? search : null,
+                        buildSort(sort))
                 .stream().map(WorkOrderDto::from).toList();
-    }
-
-    /**
-     * Active statuses to query: the single requested active status, or both
-     * (PENDING/IN_PROGRESS) when no/invalid/non-active filter is given. Folding the
-     * filter into the IN list avoids binding a null enum scalar parameter, which
-     * Hibernate cannot type-resolve.
-     */
-    private List<WorkOrderStatus> resolveStatuses(String status) {
-        WorkOrderStatus statusEnum = parseActiveStatus(status);
-        return statusEnum != null ? List.of(statusEnum) : ACTIVE_STATUSES;
     }
 
     /** Sort: 'created' → newest added first (id desc); default → closest scheduled date first. */
@@ -82,13 +68,6 @@ public class WorkOrderService {
             return Sort.by(Sort.Direction.DESC, "id");
         }
         return Sort.by(Sort.Direction.ASC, "scheduledDate");
-    }
-
-    /** Ignore Completed/Cancelled when received as a status filter (they only live in History). */
-    private WorkOrderStatus parseActiveStatus(String status) {
-        WorkOrderStatus parsed = parseStatus(status);
-        // ACTIVE_STATUSES is a List.of(...) (null-hostile): guard before contains().
-        return (parsed != null && ACTIVE_STATUSES.contains(parsed)) ? parsed : null;
     }
 
     @Transactional
@@ -123,18 +102,14 @@ public class WorkOrderService {
         }
 
         if (req.technicianId() != null) {
-            AppUser technician = userRepository.findById(req.technicianId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Technician", req.technicianId()));
-            wo.setTechnician(technician);
-            wo.setTechnicianName(technician.getName());
-            wo.setTechnicianInitials(technician.getInitials());
+            wo.assignTechnician(requireTechnician(req.technicianId()));
         }
 
         WorkOrder saved = workOrderRepository.save(wo);
 
         // Persist auto-generated orderId
         if (saved.getOrderId() == null) {
-            saved.setOrderId(String.format("#WO-%04d", saved.getId()));
+            saved.assignOrderIdIfMissing();
             workOrderRepository.save(saved);
         }
 
@@ -170,17 +145,7 @@ public class WorkOrderService {
         }
 
         if (req.technicianId() != null) {
-            if (req.technicianId() == 0) {
-                wo.setTechnician(null);
-                wo.setTechnicianName(null);
-                wo.setTechnicianInitials(null);
-            } else {
-                AppUser technician = userRepository.findById(req.technicianId())
-                        .orElseThrow(() -> new ResourceNotFoundException("Technician", req.technicianId()));
-                wo.setTechnician(technician);
-                wo.setTechnicianName(technician.getName());
-                wo.setTechnicianInitials(technician.getInitials());
-            }
+            wo.assignTechnician(req.technicianId() == 0 ? null : requireTechnician(req.technicianId()));
         }
 
         return WorkOrderDto.from(workOrderRepository.save(wo));
@@ -190,13 +155,10 @@ public class WorkOrderService {
     public void delete(Long id, String reason) {
         WorkOrder wo = workOrderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("WorkOrder", id));
-        // Deleting an order from the admin = cancelling it. The order is kept
-        // (soft-cancel) so its full detail remains available from History;
-        // the active lists exclude Cancelled orders.
-        wo.setStatus(WorkOrderStatus.CANCELLED);
-        if (StringUtils.hasText(reason)) {
-            wo.setCancellationReason(reason);
-        }
+        // Deleting an order from the admin = cancelling it (soft-cancel): el
+        // agregado conserva la orden para que el Historial siga mostrando su
+        // detalle completo, y las listas activas la excluyen.
+        wo.cancel(reason);
         WorkOrder saved = workOrderRepository.save(wo);
         recordHistory(saved, "cancelled");
     }
@@ -205,7 +167,7 @@ public class WorkOrderService {
 
     public List<WorkOrderDetailDto> findByTechnician(Long technicianId, String status) {
         List<WorkOrder> list;
-        WorkOrderStatus statusEnum = parseStatus(status);
+        WorkOrderStatus statusEnum = WorkOrderStatus.fromFilter(status);
 
         if (statusEnum != null) {
             list = workOrderRepository.findByTechnicianIdAndStatus(technicianId, statusEnum);
@@ -243,21 +205,15 @@ public class WorkOrderService {
         WorkOrderStatus previousStatus = wo.getStatus();
 
         if (StringUtils.hasText(req.status())) {
-            WorkOrderStatus target = parseStatusStrict(req.status());
-            validateTransition(previousStatus, target);
-            wo.setStatus(target);
-            if (target == WorkOrderStatus.COMPLETED && wo.getCompletedAt() == null) {
-                wo.setCompletedAt(LocalDateTime.now());
-            }
-            if (target == WorkOrderStatus.CANCELLED && StringUtils.hasText(req.cancellationReason())) {
-                wo.setCancellationReason(req.cancellationReason());
+            WorkOrderStatus target = WorkOrderStatus.from(req.status());
+            if (target == WorkOrderStatus.CANCELLED) {
+                wo.cancel(req.cancellationReason());
+            } else {
+                wo.transitionTo(target);
             }
             // Starting a Maintenance job → the client's devices flagged for
             // maintenance automatically move to "in-maintenance".
-            if (previousStatus == WorkOrderStatus.PENDING
-                    && target == WorkOrderStatus.IN_PROGRESS
-                    && wo.getType() == WorkOrderType.MAINTENANCE
-                    && wo.getClientUser() != null) {
+            if (wo.startsMaintenance(previousStatus)) {
                 deviceRepository
                         .findByClient_IdAndStatusOrderByIdAsc(wo.getClientUser().getId(), "requires-maintenance")
                         .forEach(d -> {
@@ -272,24 +228,8 @@ public class WorkOrderService {
         }
 
         // ── Work-order sensors (legacy display sensors) ──
-        if (req.sensors() != null && !req.sensors().isEmpty()) {
-            req.sensors().forEach(s ->
-                wo.getSensors().stream()
-                        .filter(existing -> existing.getSensorId() != null
-                                && existing.getSensorId().equals(s.sensorId()))
-                        .findFirst()
-                        .ifPresentOrElse(
-                                existing -> existing.setStatus(s.status()),
-                                () -> wo.getSensors().add(
-                                        Sensor.builder()
-                                                .sensorId(s.sensorId())
-                                                .location(s.location())
-                                                .status(s.status())
-                                                .workOrder(wo)
-                                                .build()
-                                )
-                        )
-            );
+        if (req.sensors() != null) {
+            req.sensors().forEach(s -> wo.upsertSensor(s.sensorId(), s.location(), s.status()));
         }
 
         // ── Installation (discovery): claim sensors already reported by the edge ──
@@ -364,36 +304,17 @@ public class WorkOrderService {
 
         // ── Maintenance: record actions ──
         if (req.maintenanceActions() != null) {
-            for (PatchWorkOrderRequest.MaintenanceActionPatchDto a : req.maintenanceActions()) {
-                if (!StringUtils.hasText(a.action())) continue;
-                wo.getMaintenanceActions().add(MaintenanceAction.builder()
-                        .deviceId(a.deviceId())
-                        .deviceName(a.deviceName())
-                        .action(a.action())
-                        .description(a.description())
-                        .workOrder(wo)
-                        .build());
-            }
+            req.maintenanceActions().forEach(a -> wo.addMaintenanceAction(
+                    a.deviceId(), a.deviceName(), a.action(), a.description()));
         }
 
         // ── Evidence images ──
         if (req.evidence() != null) {
-            for (String img : req.evidence()) {
-                if (!StringUtils.hasText(img)) continue;
-                wo.getEvidence().add(WorkOrderEvidence.builder()
-                        .image(img)
-                        .workOrder(wo)
-                        .build());
-            }
+            req.evidence().forEach(wo::addEvidence);
         }
 
         if (req.activityLogEntry() != null) {
-            ActivityLogEntry entry = ActivityLogEntry.builder()
-                    .event(req.activityLogEntry().event())
-                    .logTime(req.activityLogEntry().time())
-                    .workOrder(wo)
-                    .build();
-            wo.getActivityLog().add(entry);
+            wo.logActivity(req.activityLogEntry().event(), req.activityLogEntry().time());
         }
 
         WorkOrder saved = workOrderRepository.save(wo);
@@ -453,7 +374,7 @@ public class WorkOrderService {
                 .completionTime(now.format(TIME_FMT))
                 .client(wo.getClient())
                 .site(wo.getLocation())
-                .serviceType(typeDisplay(wo.getType()))
+                .serviceType(wo.getType().displayName())
                 .technician(wo.getTechnicianName())
                 .technicianInitials(wo.getTechnicianInitials())
                 .status(status)
@@ -463,50 +384,8 @@ public class WorkOrderService {
         historyRepository.save(h);
     }
 
-    private String typeDisplay(WorkOrderType type) {
-        String n = type.name();
-        return n.charAt(0) + n.substring(1).toLowerCase();
-    }
-
-    /** Allowed: PENDING→IN_PROGRESS, IN_PROGRESS→COMPLETED, (PENDING|IN_PROGRESS)→CANCELLED. */
-    private void validateTransition(WorkOrderStatus from, WorkOrderStatus to) {
-        if (from == to) return;
-        boolean ok = switch (from) {
-            case PENDING -> to == WorkOrderStatus.IN_PROGRESS || to == WorkOrderStatus.CANCELLED;
-            case IN_PROGRESS -> to == WorkOrderStatus.COMPLETED || to == WorkOrderStatus.CANCELLED;
-            case COMPLETED, CANCELLED -> false;
-        };
-        if (!ok) {
-            throw new BadRequestException(
-                    "Invalid status transition: " + from + " → " + to);
-        }
-    }
-
-    private WorkOrderStatus parseStatus(String status) {
-        // "all" (any case) means "no filter" — same as omitting the parameter.
-        if (!StringUtils.hasText(status) || "all".equalsIgnoreCase(status)) return null;
-        try {
-            return WorkOrderStatus.valueOf(status.toUpperCase().replace("-", "_"));
-        } catch (IllegalArgumentException ex) {
-            throw new BadRequestException("Invalid status: " + status);
-        }
-    }
-
-    private WorkOrderStatus parseStatusStrict(String status) {
-        try {
-            return WorkOrderStatus.valueOf(status.toUpperCase().replace("-", "_"));
-        } catch (IllegalArgumentException ex) {
-            throw new BadRequestException("Invalid status: " + status);
-        }
-    }
-
-    private WorkOrderType parseType(String type) {
-        // "all" (any case) means "no filter" — same as omitting the parameter.
-        if (!StringUtils.hasText(type) || "all".equalsIgnoreCase(type)) return null;
-        try {
-            return WorkOrderType.valueOf(type.toUpperCase());
-        } catch (IllegalArgumentException ex) {
-            throw new BadRequestException("Invalid type: " + type);
-        }
+    private AppUser requireTechnician(Long technicianId) {
+        return userRepository.findById(technicianId)
+                .orElseThrow(() -> new ResourceNotFoundException("Technician", technicianId));
     }
 }
