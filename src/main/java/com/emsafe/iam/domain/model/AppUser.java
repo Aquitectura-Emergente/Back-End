@@ -1,5 +1,6 @@
 package com.emsafe.iam.domain.model;
 
+import com.emsafe.shared.exception.BadRequestException;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -99,7 +100,32 @@ public class AppUser {
         return UserStatus.ACTIVE.equalsIgnoreCase(status);
     }
 
+    /** Alta hecha desde el móvil, a la espera de que un admin la apruebe. */
+    public boolean isPending() {
+        return UserStatus.PENDING.equalsIgnoreCase(status);
+    }
+
     public boolean hasRole(Role expected) {
         return role == expected;
+    }
+
+    /**
+     * Solo las cuentas activas pueden iniciar sesión. El motivo del rechazo se
+     * distingue a propósito: "pendiente de aprobación" y "desactivada" son
+     * situaciones distintas para el usuario, y ninguna de las dos debe
+     * confundirse con una contraseña incorrecta.
+     */
+    public void assertCanSignIn() {
+        if (status == null || isActive()) return;
+        if (isPending()) {
+            throw new BadRequestException("Your account is pending approval by an administrator.");
+        }
+        throw new BadRequestException(
+                "Your account has been deactivated. Please contact an administrator.");
+    }
+
+    /** Sella el momento del último acceso correcto. */
+    public void recordLogin() {
+        this.lastLogin = LocalDateTime.now();
     }
 }

@@ -7,7 +7,9 @@ import com.emsafe.iam.interfaces.rest.dto.CreateUserRequest;
 import com.emsafe.iam.interfaces.rest.dto.UpdateUserRequest;
 import com.emsafe.iam.interfaces.rest.dto.UserDto;
 import com.emsafe.iam.domain.model.AppUser;
+import com.emsafe.iam.domain.model.Initials;
 import com.emsafe.iam.domain.model.Role;
+import com.emsafe.iam.domain.model.UserStatus;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -54,7 +56,7 @@ public class UserService {
 
         String initials = StringUtils.hasText(req.initials())
                 ? req.initials()
-                : buildInitials(req.name());
+                : Initials.from(req.name());
 
         AppUser user = AppUser.builder()
                 .name(req.name())
@@ -67,7 +69,7 @@ public class UserService {
                 .specialty(req.specialty())
                 .department(req.department())
                 .joinDate(req.joinDate() != null ? req.joinDate() : LocalDate.now())
-                .status("active")
+                .status(UserStatus.ACTIVE)
                 .notes(req.notes())
                 .build();
 
@@ -130,12 +132,5 @@ public class UserService {
             throw new ResourceNotFoundException("User", id);
         }
         userRepository.deleteById(id);
-    }
-
-    private String buildInitials(String name) {
-        if (!StringUtils.hasText(name)) return "??";
-        String[] parts = name.trim().split("\\s+");
-        if (parts.length == 1) return parts[0].substring(0, Math.min(2, parts[0].length())).toUpperCase();
-        return (String.valueOf(parts[0].charAt(0)) + parts[parts.length - 1].charAt(0)).toUpperCase();
     }
 }

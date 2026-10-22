@@ -13,6 +13,9 @@ public final class UserStatus {
     public static final String ACTIVE = "active";
     public static final String INACTIVE = "inactive";
 
+    /** Auto-registro desde el móvil: no puede entrar hasta que un admin lo active. */
+    public static final String PENDING = "pending";
+
     private UserStatus() {
     }
 }

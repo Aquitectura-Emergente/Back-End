@@ -66,4 +66,37 @@ public class Alert {
 
     @Column
     private LocalDateTime resolvedAt;
+
+    // ─── Comportamiento del agregado ──────────────────────────────────────────
+
+    /** Destinatarios posibles de una alarma. */
+    public static final String TO_ALL = "all";
+    public static final String TO_SPECIFIC = "specific";
+
+    /**
+     * Marca la alarma como atendida. Resolver y sellar la fecha son una sola
+     * operación: no debería existir una alarma resuelta sin resolvedAt.
+     * Reintentar no mueve la fecha original.
+     */
+    public void resolve() {
+        if (Boolean.TRUE.equals(resolved)) return;
+        this.resolved = true;
+        this.resolvedAt = LocalDateTime.now();
+    }
+
+    public boolean isForSpecificClients() {
+        return TO_SPECIFIC.equalsIgnoreCase(recipientType);
+    }
+
+    /** Dirige la alarma a clientes concretos, dejando el nombre para mostrar. */
+    public void addressTo(List<Long> clientIds, String displayNames) {
+        this.recipientType = TO_SPECIFIC;
+        this.recipientClientIds.addAll(clientIds);
+        this.clientName = displayNames;
+    }
+
+    public void addressToEveryone() {
+        this.recipientType = TO_ALL;
+        this.clientName = "All clients";
+    }
 }

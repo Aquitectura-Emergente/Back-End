@@ -30,7 +30,7 @@ public class AlarmService {
 
     @Transactional
     public AlertDto create(CreateAlarmRequest req) {
-        boolean specific = "specific".equalsIgnoreCase(req.recipientType());
+        boolean specific = Alert.TO_SPECIFIC.equalsIgnoreCase(req.recipientType());
 
         Alert alert = Alert.builder()
                 .type(req.type())
@@ -38,19 +38,17 @@ public class AlarmService {
                 .title(req.title())
                 .description(req.description())
                 .relativeTime(StringUtils.hasText(req.relativeTime()) ? req.relativeTime() : "Just now")
-                .recipientType(specific ? "specific" : "all")
+                .recipientType(specific ? Alert.TO_SPECIFIC : Alert.TO_ALL)
                 .sensor(req.sensor())
                 .build();
 
         if (specific && req.clientIds() != null && !req.clientIds().isEmpty()) {
             List<AppUser> clients = userRepository.findAllById(req.clientIds());
-            alert.getRecipientClientIds().addAll(
-                    clients.stream().map(AppUser::getId).toList());
-            alert.setClientName(clients.stream()
-                    .map(AppUser::getName)
-                    .collect(Collectors.joining(", ")));
+            alert.addressTo(
+                    clients.stream().map(AppUser::getId).toList(),
+                    clients.stream().map(AppUser::getName).collect(Collectors.joining(", ")));
         } else {
-            alert.setClientName("All clients");
+            alert.addressToEveryone();
         }
 
         return AlertDto.from(alertRepository.save(alert));
@@ -60,8 +58,7 @@ public class AlarmService {
     public AlertDto resolve(Long id) {
         Alert alert = alertRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Alarm", id));
-        alert.setResolved(true);
-        alert.setResolvedAt(LocalDateTime.now());
+        alert.resolve();
         return AlertDto.from(alertRepository.save(alert));
     }
 

@@ -8,7 +8,9 @@ import com.emsafe.iam.infrastructure.security.JwtUtil;
 import com.emsafe.iam.domain.services.LoginAttemptService;
 import com.emsafe.shared.exception.BadRequestException;
 import com.emsafe.iam.domain.model.AppUser;
+import com.emsafe.iam.domain.model.Initials;
 import com.emsafe.iam.domain.model.Role;
+import com.emsafe.iam.domain.model.UserStatus;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -39,7 +41,7 @@ public class AuthService {
         String email = jwtUtil.extractEmail(token);
         AppUser user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new BadCredentialsException("Account no longer exists"));
-        if (!"active".equalsIgnoreCase(user.getStatus())) {
+        if (!user.isActive()) {
             throw new BadCredentialsException("Account is not active");
         }
         String newToken = jwtUtil.generateToken(user.getEmail(), user.getRole().name(), user.getId());
@@ -63,20 +65,11 @@ public class AuthService {
                 throw new BadCredentialsException("Invalid email or password");
             }
 
-            // Only active accounts may sign in. Self-registered accounts start
-            // "pending"; an admin can also "inactivate" any account — both are
-            // blocked here so they can never reach the app (all three roles).
-            String status = user.getStatus();
-            if (status != null && !"active".equalsIgnoreCase(status)) {
-                if ("pending".equalsIgnoreCase(status)) {
-                    throw new BadRequestException(
-                            "Your account is pending approval by an administrator.");
-                }
-                throw new BadRequestException(
-                        "Your account has been deactivated. Please contact an administrator.");
-            }
+            // Solo las cuentas activas entran: el auto-registro nace "pending" y
+            // un admin puede desactivar cualquier cuenta. El agregado decide.
+            user.assertCanSignIn();
 
-            user.setLastLogin(LocalDateTime.now());
+            user.recordLogin();
             userRepository.save(user);
 
             String token = jwtUtil.generateToken(user.getEmail(), user.getRole().name(), user.getId());
@@ -111,7 +104,7 @@ public class AuthService {
         }
         userRepository.save(AppUser.builder()
                 .name(req.name().trim())
-                .initials(buildInitials(req.name()))
+                .initials(Initials.from(req.name()))
                 .email(req.email().trim())
                 .passwordHash(passwordEncoder.encode(req.password()))
                 .role(Role.CLIENT)
@@ -126,17 +119,7 @@ public class AuthService {
                 .taxId(req.taxId())
                 .industry(req.industry())
                 .joinDate(LocalDate.now())
-                .status("pending")
+                .status(UserStatus.PENDING)
                 .build());
-    }
-
-    private String buildInitials(String name) {
-        String[] parts = name.trim().split("\\s+");
-        StringBuilder sb = new StringBuilder();
-        for (String part : parts) {
-            if (!part.isEmpty()) sb.append(Character.toUpperCase(part.charAt(0)));
-            if (sb.length() == 2) break;
-        }
-        return sb.toString();
     }
 }
