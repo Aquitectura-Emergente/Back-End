@@ -2,9 +2,8 @@ package com.emsafe.fieldservice.application;
 
 import com.emsafe.alerts.domain.model.Alert;
 import com.emsafe.alerts.infrastructure.persistence.AlertRepository;
+import com.emsafe.iottelemetry.application.DeviceProvisioningService;
 import com.emsafe.iottelemetry.interfaces.rest.dto.DeviceDto;
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
 import com.emsafe.fieldservice.domain.model.History;
 import com.emsafe.fieldservice.infrastructure.persistence.HistoryRepository;
 import com.emsafe.shared.exception.BadRequestException;
@@ -35,7 +34,7 @@ public class WorkOrderService {
 
     private final WorkOrderRepository workOrderRepository;
     private final UserRepository userRepository;
-    private final DeviceRepository deviceRepository;
+    private final DeviceProvisioningService deviceProvisioning;
     private final AlertRepository alertRepository;
     private final HistoryRepository historyRepository;
 
@@ -211,15 +210,10 @@ public class WorkOrderService {
             } else {
                 wo.transitionTo(target);
             }
-            // Starting a Maintenance job → the client's devices flagged for
-            // maintenance automatically move to "in-maintenance".
+            // Arrancar un mantenimiento pone en marcha los equipos del cliente
+            // que estaban marcados para revisión.
             if (wo.startsMaintenance(previousStatus)) {
-                deviceRepository
-                        .findByClient_IdAndStatusOrderByIdAsc(wo.getClientUser().getId(), "requires-maintenance")
-                        .forEach(d -> {
-                            d.setStatus("in-maintenance");
-                            deviceRepository.save(d);
-                        });
+                deviceProvisioning.startMaintenanceFor(wo.getClientUser().getId());
             }
         }
 
@@ -233,73 +227,22 @@ public class WorkOrderService {
         }
 
         // ── Installation (discovery): claim sensors already reported by the edge ──
-        // The technician picks discovered sensors and provides name + type; the
-        // backend assigns client + location (from the work order). If the sensor
-        // hasn't reported yet, find-or-create by serial as a safety net.
         if (req.claimedDevices() != null) {
-            for (PatchWorkOrderRequest.ClaimDeviceDto c : req.claimedDevices()) {
-                Device device = null;
-                if (c.deviceId() != null) {
-                    device = deviceRepository.findById(c.deviceId()).orElse(null);
-                }
-                if (device == null && StringUtils.hasText(c.serialNumber())) {
-                    device = deviceRepository.findBySerialNumber(c.serialNumber().trim());
-                }
-                if (device == null) {
-                    if (!StringUtils.hasText(c.serialNumber())) {
-                        throw new BadRequestException("deviceId or serialNumber is required to claim a device");
-                    }
-                    device = Device.builder()
-                            .serialNumber(c.serialNumber().trim())
-                            .createdAt(LocalDateTime.now())
-                            .build();
-                }
-                if (StringUtils.hasText(c.name())) device.setName(c.name());
-                else if (!StringUtils.hasText(device.getName())) device.setName("Sensor");
-                if (StringUtils.hasText(c.type())) device.setType(c.type());
-                else if (!StringUtils.hasText(device.getType())) device.setType("Sensor");
-                device.setClient(wo.getClientUser());
-                device.setLocation(wo.getLocation());
-                device.setStatus("active");
-                device.setInstallDate(LocalDate.now());
-                deviceRepository.save(device);
-            }
+            req.claimedDevices().forEach(c -> deviceProvisioning.claimDiscovered(
+                    c.deviceId(), c.serialNumber(), c.name(), c.type(),
+                    wo.getClientUser(), wo.getLocation()));
         }
 
         // ── Installation (legacy): create devices from a typed serial ──
         if (req.newDevices() != null) {
-            for (PatchWorkOrderRequest.NewDeviceDto d : req.newDevices()) {
-                if (!StringUtils.hasText(d.serialNumber())) {
-                    throw new BadRequestException("Serial number is required for every installed device");
-                }
-                Device device = Device.builder()
-                        .name(StringUtils.hasText(d.name()) ? d.name() : "Sensor")
-                        .type(StringUtils.hasText(d.type()) ? d.type() : "Sensor")
-                        .location(wo.getLocation())
-                        .status("active")
-                        .serialNumber(d.serialNumber())
-                        .installDate(LocalDate.now())
-                        .client(wo.getClientUser())
-                        .build();
-                deviceRepository.save(device);
-            }
+            req.newDevices().forEach(d -> deviceProvisioning.installNew(
+                    d.serialNumber(), d.name(), d.type(),
+                    wo.getClientUser(), wo.getLocation()));
         }
 
         // ── Maintenance / Collection: update device status ──
-        // Collection returns a sensor to the pool: status "unregistered" also
-        // clears the client and install date so it can be re-discovered elsewhere.
         if (req.deviceUpdates() != null) {
-            for (PatchWorkOrderRequest.DeviceStatusDto u : req.deviceUpdates()) {
-                if (u.deviceId() == null || !StringUtils.hasText(u.status())) continue;
-                deviceRepository.findById(u.deviceId()).ifPresent(device -> {
-                    device.setStatus(u.status());
-                    if ("unregistered".equals(u.status())) {
-                        device.setClient(null);
-                        device.setInstallDate(null);
-                    }
-                    deviceRepository.save(device);
-                });
-            }
+            req.deviceUpdates().forEach(u -> deviceProvisioning.changeStatus(u.deviceId(), u.status()));
         }
 
         // ── Maintenance: record actions ──
@@ -344,8 +287,7 @@ public class WorkOrderService {
     /** Devices belonging to the order's client (empty when no client is linked). */
     private List<DeviceDto> resolveClientDevices(WorkOrder wo) {
         if (wo.getClientUser() == null) return List.of();
-        return deviceRepository.findByClient_IdOrderByIdAsc(wo.getClientUser().getId())
-                .stream().map(DeviceDto::from).toList();
+        return deviceProvisioning.listForClient(wo.getClientUser().getId());
     }
 
     private void raiseOrderCreatedAlert(WorkOrder wo, AppUser clientUser) {

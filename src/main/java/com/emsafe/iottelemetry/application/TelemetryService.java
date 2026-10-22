@@ -51,14 +51,8 @@ public class TelemetryService {
         String serial = req.getSerialNumber().trim();
         Device device = deviceRepository.findBySerialNumber(serial);
         if (device == null) {
-            // Sensor aún no registrado: lo autocreamos como "unregistered" (sin cliente).
-            device = deviceRepository.save(Device.builder()
-                    .name("Unregistered sensor " + serial)
-                    .type("Sensor")
-                    .status("unregistered")
-                    .serialNumber(serial)
-                    .createdAt(LocalDateTime.now())
-                    .build());
+            // Sensor aún no registrado: lo autocreamos para no perder la lectura.
+            device = deviceRepository.save(Device.unregistered(serial));
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -90,7 +84,7 @@ public class TelemetryService {
             messagingTemplate.convertAndSend("/topic/clients/" + client.getId() + "/readings", dto);
         }
         // Unassigned sensors also feed the technician's installation discovery panel.
-        if ("unregistered".equals(device.getStatus())) {
+        if (device.isUnregistered()) {
             messagingTemplate.convertAndSend("/topic/discovery", dto);
         }
 

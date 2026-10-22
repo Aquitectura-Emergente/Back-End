@@ -31,7 +31,7 @@ public class Device {
 
     @Column(nullable = false, length = 30)
     @Builder.Default
-    private String status = "active";
+    private String status = DeviceStatus.ACTIVE;
 
     @Column(length = 100)
     private String serialNumber;
@@ -54,4 +54,64 @@ public class Device {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "client_id")
     private AppUser client;
+
+    // ─── Comportamiento del agregado ──────────────────────────────────────────
+
+    /**
+     * Sensor que el edge reporta con un serial que no está registrado. Se crea
+     * igualmente para no perder la lectura; queda sin cliente hasta que un
+     * técnico lo reclame durante una instalación.
+     */
+    public static Device unregistered(String serialNumber) {
+        return Device.builder()
+                .name("Unregistered sensor " + serialNumber)
+                .type("Sensor")
+                .status(DeviceStatus.UNREGISTERED)
+                .serialNumber(serialNumber)
+                .createdAt(LocalDateTime.now())
+                .build();
+    }
+
+    public boolean isUnregistered() {
+        return DeviceStatus.isUnregistered(status);
+    }
+
+    /**
+     * Un técnico reclama el sensor durante una instalación: queda ligado al
+     * cliente y la ubicación de la orden, y pasa a activo. El nombre y el tipo
+     * solo se pisan si vienen informados; si el dispositivo aún no tiene,
+     * se le da uno por defecto.
+     */
+    public void claimFor(AppUser newClient, String siteLocation, String newName, String newType) {
+        if (newName != null && !newName.isBlank()) this.name = newName;
+        else if (this.name == null || this.name.isBlank()) this.name = "Sensor";
+
+        if (newType != null && !newType.isBlank()) this.type = newType;
+        else if (this.type == null || this.type.isBlank()) this.type = "Sensor";
+
+        this.client = newClient;
+        this.location = siteLocation;
+        this.status = DeviceStatus.ACTIVE;
+        this.installDate = LocalDate.now();
+    }
+
+    /**
+     * Una recogida devuelve el sensor al pool: además del estado, se limpian
+     * cliente y fecha de instalación para que pueda volver a descubrirse en
+     * otra sede.
+     */
+    public void releaseToPool() {
+        this.status = DeviceStatus.UNREGISTERED;
+        this.client = null;
+        this.installDate = null;
+    }
+
+    /** Cambia el estado operativo; si es una recogida, libera además el sensor. */
+    public void changeStatus(String newStatus) {
+        if (DeviceStatus.isUnregistered(newStatus)) {
+            releaseToPool();
+        } else {
+            this.status = newStatus;
+        }
+    }
 }
