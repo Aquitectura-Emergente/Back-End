@@ -23,7 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 @Slf4j
 @Component
@@ -38,6 +40,14 @@ public class DataInitializer implements CommandLineRunner {
     private final DeviceRepository deviceRepository;
     private final PasswordEncoder passwordEncoder;
 
+    // ─── Sedes de los clientes (una dirección registrada por cliente) ─────────
+    /** Quantum Dynamics Lab — Av. Universitaria 1801, San Miguel. */
+    private static final double QD_LAT = -12.0774, QD_LNG = -77.0869;
+    /** Harbor Medical Center — Av. Javier Prado Oeste 499, San Isidro. */
+    private static final double HM_LAT = -12.0960, HM_LNG = -77.0442;
+    /** Global Pharma Corp — Av. El Sol 455, Villa El Salvador. */
+    private static final double GP_LAT = -12.2100, GP_LNG = -76.9500;
+
     @Override
     @Transactional
     public void run(String... args) {
@@ -49,6 +59,7 @@ public class DataInitializer implements CommandLineRunner {
         seedUsers();
         seedDevices();          // devices first so readings can reference them
         seedRadiationReadings();
+        seedReadingTimeSeries();
         seedWorkOrders();
         seedAlerts();
         seedHistory();
@@ -276,8 +287,6 @@ public class DataInitializer implements CommandLineRunner {
      * One reading per device (sensor), representing the latest measurement.
      */
     private void seedRadiationReadings() {
-        // Quantum Dynamics Lab location: -12.0774, -77.0869 (San Miguel)
-        final double QD_LAT = -12.0774, QD_LNG = -77.0869;
         Device qdSn1 = deviceRepository.findBySerialNumber("QD-SN-001");
         Device qdSn2 = deviceRepository.findBySerialNumber("QD-SN-002");
         Device qdMn1 = deviceRepository.findBySerialNumber("QD-MN-001");
@@ -285,8 +294,6 @@ public class DataInitializer implements CommandLineRunner {
         Device qdSn4 = deviceRepository.findBySerialNumber("QD-SN-004");
         Device qdMn2 = deviceRepository.findBySerialNumber("QD-MN-002");
 
-        // Harbor Medical Center location: -12.0960, -77.0442 (San Isidro)
-        final double HM_LAT = -12.0960, HM_LNG = -77.0442;
         Device hmSn1 = deviceRepository.findBySerialNumber("HM-SN-001");
         Device hmSn2 = deviceRepository.findBySerialNumber("HM-SN-002");
         Device hmMn1 = deviceRepository.findBySerialNumber("HM-MN-001");
@@ -295,8 +302,6 @@ public class DataInitializer implements CommandLineRunner {
         Device hmSn5 = deviceRepository.findBySerialNumber("HM-SN-005");
         Device hmMn2 = deviceRepository.findBySerialNumber("HM-MN-002");
 
-        // Global Pharma Corp location: -12.2100, -76.9500 (Villa El Salvador)
-        final double GP_LAT = -12.2100, GP_LNG = -76.9500;
         Device gpSn1 = deviceRepository.findBySerialNumber("GP-SN-001");
         Device gpSn2 = deviceRepository.findBySerialNumber("GP-SN-002");
         Device gpMn1 = deviceRepository.findBySerialNumber("GP-MN-001");
@@ -418,6 +423,118 @@ public class DataInitializer implements CommandLineRunner {
         }
         radiationReadingRepository.saveAll(readings);
         log.info("Seeded {} radiation readings (µT scale)", readings.size());
+    }
+
+    // ─── Serie temporal de lecturas (oct–dic 2026) ────────────────────────────
+
+    /** Primer día de la serie de demo. */
+    private static final LocalDate SERIES_FROM = LocalDate.of(2026, 10, 1);
+    /** Último día de la serie de demo. */
+    private static final LocalDate SERIES_TO = LocalDate.of(2026, 12, 31);
+    /** Ventana "actual": días con tres mediciones en lugar de una. */
+    private static final LocalDate DENSE_FROM = LocalDate.of(2026, 10, 15);
+    private static final LocalDate DENSE_TO = LocalDate.of(2026, 10, 28);
+
+    /** Nivel habitual de un sensor y la sede donde está instalado. */
+    private record SensorProfile(String serial, String sensorId, double baseline,
+                                 double latitude, double longitude) {
+    }
+
+    /**
+     * Serie diaria por sensor del 1-oct al 31-dic de 2026.
+     *
+     * Existe porque la telemetría real todavía no está construida y sin historia
+     * no se pueden ejercitar los reportes ({@code /api/client/reports}, que agrupa
+     * los últimos 30 días por día y los últimos 12 meses por mes), el promedio de
+     * 24 h del dashboard ni los gráficos de tendencia. Es data de DEMO, no
+     * mediciones: cuando el edge empiece a ingestar de verdad, este método sobra.
+     *
+     * La semilla del generador es fija a propósito — todo el equipo ve exactamente
+     * los mismos números, así que un bug reportado por alguien se reproduce igual
+     * en la máquina del resto.
+     */
+    private void seedReadingTimeSeries() {
+        List<SensorProfile> profiles = List.of(
+                // Quantum Dynamics Lab — laboratorio universitario, niveles bajos
+                new SensorProfile("QD-SN-001", "#QD-001", 95, QD_LAT, QD_LNG),
+                new SensorProfile("QD-SN-002", "#QD-002", 85, QD_LAT, QD_LNG),
+                new SensorProfile("QD-MN-001", "#QD-003", 110, QD_LAT, QD_LNG),
+                new SensorProfile("QD-SN-003", "#QD-004", 105, QD_LAT, QD_LNG),
+                new SensorProfile("QD-SN-004", "#QD-005", 80, QD_LAT, QD_LNG),
+                new SensorProfile("QD-MN-002", "#QD-006", 90, QD_LAT, QD_LNG),
+
+                // Harbor Medical Center — clínica, picos en imagenología
+                new SensorProfile("HM-SN-001", "#HM-001", 190, HM_LAT, HM_LNG),
+                new SensorProfile("HM-SN-002", "#HM-002", 225, HM_LAT, HM_LNG),
+                new SensorProfile("HM-MN-001", "#HM-003", 255, HM_LAT, HM_LNG),
+                new SensorProfile("HM-SN-003", "#HM-004", 95, HM_LAT, HM_LNG),
+                new SensorProfile("HM-SN-004", "#HM-005", 160, HM_LAT, HM_LNG),
+                new SensorProfile("HM-SN-005", "#HM-006", 85, HM_LAT, HM_LNG),
+                new SensorProfile("HM-MN-002", "#HM-007", 215, HM_LAT, HM_LNG),
+
+                // Global Pharma Corp — planta industrial, los niveles más altos
+                new SensorProfile("GP-SN-001", "#GP-001", 140, GP_LAT, GP_LNG),
+                new SensorProfile("GP-SN-002", "#GP-002", 160, GP_LAT, GP_LNG),
+                new SensorProfile("GP-MN-001", "#GP-003", 125, GP_LAT, GP_LNG),
+                new SensorProfile("GP-SN-003", "#GP-004", 275, GP_LAT, GP_LNG),
+                new SensorProfile("GP-SN-004", "#GP-005", 95, GP_LAT, GP_LNG),
+                new SensorProfile("GP-MN-002", "#GP-006", 240, GP_LAT, GP_LNG)
+        );
+
+        Random rnd = new Random(20261028L);
+        List<RadiationReading> series = new ArrayList<>();
+        int sensorIndex = 0;
+
+        for (SensorProfile p : profiles) {
+            Device device = deviceRepository.findBySerialNumber(p.serial());
+            if (device == null) continue;
+            // Desfase por sensor: el edge no reporta los 19 al mismo minuto.
+            int minuteOffset = (sensorIndex++ * 7) % 60;
+
+            for (LocalDate day = SERIES_FROM; !day.isAfter(SERIES_TO); day = day.plusDays(1)) {
+                boolean weekend = day.getDayOfWeek().getValue() >= 6;
+                boolean dense = !day.isBefore(DENSE_FROM) && !day.isAfter(DENSE_TO);
+                int perDay = dense ? 3 : 1;
+
+                for (int i = 0; i < perDay; i++) {
+                    double factor = 0.88 + rnd.nextDouble() * 0.24;   // ±12 % de ruido
+                    if (weekend) factor *= 0.82;                      // menos actividad
+                    if (rnd.nextInt(18) == 0) factor *= 1.35;         // pico esporádico
+                    double uT = Math.round(p.baseline() * factor * 10.0) / 10.0;
+                    String level = RadiationLevel.byValue(uT);
+
+                    series.add(RadiationReading.builder()
+                            .readingDate(day)
+                            .value(uT)
+                            .latitude(p.latitude()).longitude(p.longitude())
+                            .location(device.getLocation())
+                            .sensorId(p.sensorId())
+                            .level(level.toUpperCase())
+                            .message(edgeMessage(level))
+                            .recordedAt(day.atTime(dense ? 7 + i * 6 : 10, 0).plusMinutes(minuteOffset))
+                            .device(device)
+                            .build());
+                }
+            }
+        }
+
+        radiationReadingRepository.saveAll(series);
+        log.info("Seeded {} time-series readings ({} → {})",
+                series.size(), SERIES_FROM, SERIES_TO);
+    }
+
+    /**
+     * Mensaje que acompañaría la lectura si hubiera pasado por el edge. Copiado
+     * literal de {@code AlertLevel} en {@code monitoring/domain/value_objects.py}
+     * (sin acentos, como los manda el edge) para que la data de demo sea
+     * indistinguible de la ingestada.
+     */
+    private static String edgeMessage(String level) {
+        return switch (level) {
+            case "danger" -> "Nivel critico de EMF. Se recomienda cortar la energia del equipo.";
+            case "caution" -> "Exposicion moderada. Se recomienda mantener distancia de la fuente.";
+            default -> "Campo dentro de rango seguro. Equipo operando con normalidad.";
+        };
     }
 
     // ─── Work Orders ──────────────────────────────────────────────────────────
@@ -695,6 +812,148 @@ public class DataInitializer implements CommandLineRunner {
         woCollect.setClientUser(pharma);
         workOrderRepository.save(woCollect);
 
+        // ── Temporada oct–dic 2026 ───────────────────────────────────────────
+        // Octubre cerrado o en curso; noviembre y diciembre programados. Las
+        // ciudades repiten los sufijos ", TX/CA/WA/NY" porque el gráfico
+        // regional del dashboard cuenta por ahí (countByCitySuffix).
+        List<WorkOrder> seasonOrders = List.of(
+                buildWo("#WO-9301", WorkOrderType.MAINTENANCE, WorkOrderStatus.COMPLETED,
+                        "Northwind Energy", "Substation 4 - East Yard", "Austin, TX",
+                        LocalDate.of(2026, 10, 2), "08:30 AM", marcus, "Marcus Rivera", "MR"),
+
+                buildWo("#WO-9302", WorkOrderType.INSTALLATION, WorkOrderStatus.COMPLETED,
+                        "Bay General Hospital", "Radiology - 2nd Floor", "Oakland, CA",
+                        LocalDate.of(2026, 10, 6), "10:00 AM", sarah, "Sarah Jenkins", "SJ"),
+
+                buildWo("#WO-9303", WorkOrderType.COLLECTION, WorkOrderStatus.COMPLETED,
+                        "Atlas Semiconductor", "Clean Room B4", "Phoenix, AZ",
+                        LocalDate.of(2026, 10, 9), "09:15 AM", elena, "Elena Rodriguez", "ER"),
+
+                buildWo("#WO-9304", WorkOrderType.MAINTENANCE, WorkOrderStatus.COMPLETED,
+                        "Urban Health Trust", "North Wing Lab", "Seattle, WA",
+                        LocalDate.of(2026, 10, 14), "13:00 PM", maria, "Maria Silva", "MS"),
+
+                buildWo("#WO-9305", WorkOrderType.INSTALLATION, WorkOrderStatus.IN_PROGRESS,
+                        "Summit Data Center", "Server Hall 2", "Las Vegas, NV",
+                        LocalDate.of(2026, 10, 20), "11:30 AM", marcus, "Marcus Rivera", "MR"),
+
+                buildWo("#WO-9306", WorkOrderType.MAINTENANCE, WorkOrderStatus.IN_PROGRESS,
+                        "Global Net Systems", "Tower 7 - Substation", "San Jose, CA",
+                        LocalDate.of(2026, 10, 23), "15:00 PM", sarah, "Sarah Jenkins", "SJ"),
+
+                buildWo("#WO-9307", WorkOrderType.COLLECTION, WorkOrderStatus.IN_PROGRESS,
+                        "Metro Logistics Corp.", "Downtown Plaza", "Austin, TX",
+                        LocalDate.of(2026, 10, 27), "08:00 AM", elena, "Elena Rodriguez", "ER"),
+
+                buildWo("#WO-9308", WorkOrderType.INSTALLATION, WorkOrderStatus.PENDING,
+                        "Greenfield Labs", "Sector 7 - Annex", "Boston, MA",
+                        LocalDate.of(2026, 11, 4), "09:00 AM", marcus, "Marcus Rivera", "MR"),
+
+                buildWo("#WO-9309", WorkOrderType.MAINTENANCE, WorkOrderStatus.PENDING,
+                        "Pacific Heights Clinic", "Wing B - MRI Suite", "San Francisco, CA",
+                        LocalDate.of(2026, 11, 10), "10:30 AM", maria, "Maria Silva", "MS"),
+
+                buildWo("#WO-9310", WorkOrderType.COLLECTION, WorkOrderStatus.PENDING,
+                        "Nexus Research Lab", "Quantum Lab - Sub B", "Chicago, IL",
+                        LocalDate.of(2026, 11, 17), "14:00 PM", sarah, "Sarah Jenkins", "SJ"),
+
+                buildWo("#WO-9311", WorkOrderType.INSTALLATION, WorkOrderStatus.PENDING,
+                        "Coastal Antenna Inc.", "Coastal Antenna 7", "Miami, FL",
+                        LocalDate.of(2026, 11, 25), "08:45 AM", elena, "Elena Rodriguez", "ER"),
+
+                buildWo("#WO-9312", WorkOrderType.MAINTENANCE, WorkOrderStatus.PENDING,
+                        "Urban Health Trust", "South Wing - Oncology", "Seattle, WA",
+                        LocalDate.of(2026, 12, 2), "09:30 AM", marcus, "Marcus Rivera", "MR"),
+
+                buildWo("#WO-9313", WorkOrderType.COLLECTION, WorkOrderStatus.PENDING,
+                        "Atlas Semiconductor", "Clean Room A1", "Phoenix, AZ",
+                        LocalDate.of(2026, 12, 9), "11:00 AM", maria, "Maria Silva", "MS"),
+
+                buildWo("#WO-9314", WorkOrderType.INSTALLATION, WorkOrderStatus.PENDING,
+                        "Bay General Hospital", "Emergency Wing - Ground", "Oakland, CA",
+                        LocalDate.of(2026, 12, 15), "08:00 AM", sarah, "Sarah Jenkins", "SJ"),
+
+                buildWo("#WO-9315", WorkOrderType.MAINTENANCE, WorkOrderStatus.PENDING,
+                        "Summit Data Center", "Server Hall 1", "Las Vegas, NV",
+                        LocalDate.of(2026, 12, 22), "13:30 PM", elena, "Elena Rodriguez", "ER")
+        );
+        workOrderRepository.saveAll(seasonOrders);
+
+        // Órdenes detalladas de la temporada, ligadas a los clientes reales: son
+        // las que alimentan la agenda del técnico (/tech) y los flujos de cliente.
+        WorkOrder woOct = buildDetailedWo("WO-6101", WorkOrderType.MAINTENANCE, WorkOrderStatus.COMPLETED,
+                "Quantum Dynamics Lab", "Av. Universitaria 1801, San Miguel, Lima",
+                LocalDate.of(2026, 10, 8), "09:00 AM", marcus,
+                "Standard", "Dr. Quantum Ops", "Lab Director",
+                "+51-1-555-0701", "ops@quantumdyn.com",
+                "Report to PUCP security. Escort required to the research wing.",
+                6, "QD-MNT-10",
+                "Calibración trimestral completada. Sensor del Lab. Químico requiere repuesto.",
+                List.of("Standard Toolkit", "Calibration Rig B"));
+        woOct.setClientUser(quantum);
+        woOct.getActivityLog().add(logEntry("Work Order Completed", "Oct 08, 11:40", woOct));
+        woOct.getActivityLog().add(logEntry("Maintenance Performed", "Oct 08, 09:30", woOct));
+        woOct.getActivityLog().add(logEntry("Arrival at Site", "Oct 08, 09:05", woOct));
+        workOrderRepository.save(woOct);
+
+        WorkOrder woOctHm = buildDetailedWo("WO-6102", WorkOrderType.MAINTENANCE, WorkOrderStatus.IN_PROGRESS,
+                "Harbor Medical Center", "Av. Javier Prado Oeste 499, San Isidro, Lima",
+                LocalDate.of(2026, 10, 26), "11:00 AM", marcus,
+                "High Priority", "Facilities Harbor", "Facilities Manager",
+                "+51-1-555-0702", "facilities@harbormed.com",
+                "Check in at reception. Do not enter rooms while equipment is in use.",
+                7, "HM-MNT-10", "",
+                List.of("Standard Toolkit", "Diagnostic Toolkit"));
+        woOctHm.setClientUser(harbor);
+        woOctHm.getSensors().add(sensor("#HM-002", "Suite de Resonancia Magnética — Piso 2", "maintenance", woOctHm));
+        woOctHm.getSensors().add(sensor("#HM-007", "Radiología Intervencionista — Piso 2", "maintenance", woOctHm));
+        woOctHm.getActivityLog().add(logEntry("Arrival at Site", "Oct 26, 11:10", woOctHm));
+        workOrderRepository.save(woOctHm);
+
+        WorkOrder woNov = buildDetailedWo("WO-6103", WorkOrderType.INSTALLATION, WorkOrderStatus.PENDING,
+                "Global Pharma Corp", "Av. El Sol 455, Villa El Salvador, Lima",
+                LocalDate.of(2026, 11, 12), "08:30 AM", marcus,
+                "Urgent", "Safety Pharma", "Safety Officer",
+                "+51-1-555-0703", "safety@globalpharma.com",
+                "Full plant protocol. Suit-up at entry.",
+                4, "GP-INS-11", "",
+                List.of("Standard Toolkit", "Calibration Rig B"));
+        woNov.setClientUser(pharma);
+        workOrderRepository.save(woNov);
+
+        WorkOrder woNovQd = buildDetailedWo("WO-6104", WorkOrderType.COLLECTION, WorkOrderStatus.PENDING,
+                "Quantum Dynamics Lab", "Av. Universitaria 1801, San Miguel, Lima",
+                LocalDate.of(2026, 11, 24), "14:00 PM", marcus,
+                "Standard", "Dr. Quantum Ops", "Lab Director",
+                "+51-1-555-0701", "ops@quantumdyn.com",
+                "Retiro del monitor del Aula de Prácticas (fuera de servicio).",
+                1, "QD-COL-11", "",
+                List.of("Removal Toolkit"));
+        woNovQd.setClientUser(quantum);
+        workOrderRepository.save(woNovQd);
+
+        WorkOrder woDic = buildDetailedWo("WO-6105", WorkOrderType.MAINTENANCE, WorkOrderStatus.PENDING,
+                "Harbor Medical Center", "Av. Javier Prado Oeste 499, San Isidro, Lima",
+                LocalDate.of(2026, 12, 11), "10:00 AM", marcus,
+                "High Priority", "Facilities Harbor", "Facilities Manager",
+                "+51-1-555-0702", "facilities@harbormed.com",
+                "Revisión de cierre de año. Coordinar con el área de imagenología.",
+                7, "HM-MNT-12", "",
+                List.of("Standard Toolkit", "Safety Meter"));
+        woDic.setClientUser(harbor);
+        workOrderRepository.save(woDic);
+
+        WorkOrder woDicGp = buildDetailedWo("WO-6106", WorkOrderType.MAINTENANCE, WorkOrderStatus.PENDING,
+                "Global Pharma Corp", "Av. El Sol 455, Villa El Salvador, Lima",
+                LocalDate.of(2026, 12, 19), "08:00 AM", marcus,
+                "Urgent", "Safety Pharma", "Safety Officer",
+                "+51-1-555-0703", "safety@globalpharma.com",
+                "Lab. Farmacéutico en DANGER sostenido. Revisar blindaje de la fuente.",
+                6, "GP-MNT-12", "",
+                List.of("Standard Toolkit", "Safety Meter", "Calibration Rig B"));
+        woDicGp.setClientUser(pharma);
+        workOrderRepository.save(woDicGp);
+
         log.info("Seeded work orders");
     }
 
@@ -763,7 +1022,108 @@ public class DataInitializer implements CommandLineRunner {
                         .createdAt(LocalDateTime.now().minusDays(1)).build()
         );
         alertRepository.saveAll(alerts);
-        log.info("Seeded {} alerts", alerts.size());
+
+        // ── Temporada oct–dic 2026 ───────────────────────────────────────────
+        // Fechas FIJAS (las de arriba son relativas a now()), con destinatario y
+        // sensor poblados para que el modal de detalle tenga qué mostrar. Varias
+        // van resueltas: así la fila de estado y el botón de resolver se pueden
+        // probar en los dos casos.
+        AppUser quantumUser = userRepository.findByEmail("ops@quantumdyn.com").orElse(null);
+        AppUser harborUser = userRepository.findByEmail("facilities@harbormed.com").orElse(null);
+        AppUser pharmaUser = userRepository.findByEmail("safety@globalpharma.com").orElse(null);
+
+        List<Alert> seasonAlerts = List.of(
+                seasonAlert("danger", "ph-warning-circle",
+                        "Nivel crítico sostenido — Global Pharma Corp",
+                        "El sensor #GP-004 (Laboratorio Farmacéutico) superó 270 µT durante 3 h.",
+                        LocalDateTime.of(2026, 10, 3, 9, 20), "#GP-004", pharmaUser,
+                        LocalDateTime.of(2026, 10, 3, 14, 5)),
+
+                seasonAlert("warning", "ph-warning",
+                        "Nivel en umbral — Harbor Medical Center",
+                        "El sensor #HM-005 (Pasillo de Oncología) ronda los 160 µT.",
+                        LocalDateTime.of(2026, 10, 7, 11, 45), "#HM-005", harborUser,
+                        LocalDateTime.of(2026, 10, 8, 10, 0)),
+
+                seasonAlert("danger", "ph-warning-circle",
+                        "Pico en resonancia magnética — Harbor Medical Center",
+                        "El sensor #HM-002 registró 248 µT durante una sesión de imagenología.",
+                        LocalDateTime.of(2026, 10, 12, 16, 30), "#HM-002", harborUser, null),
+
+                seasonAlert("info", "ph-arrows-clockwise",
+                        "Calibración trimestral completada — Quantum Dynamics Lab",
+                        "Los 6 sensores de la sede fueron recalibrados en la orden WO-6101.",
+                        LocalDateTime.of(2026, 10, 8, 11, 40), "#QD-001", quantumUser,
+                        LocalDateTime.of(2026, 10, 8, 11, 40)),
+
+                seasonAlert("warning", "ph-wrench",
+                        "Sensor requiere mantenimiento — Quantum Dynamics Lab",
+                        "El sensor #QD-004 (Laboratorio Químico) reporta deriva en la medición.",
+                        LocalDateTime.of(2026, 10, 18, 8, 15), "#QD-004", quantumUser, null),
+
+                seasonAlert("danger", "ph-warning-circle",
+                        "Nivel crítico — Global Pharma Corp",
+                        "El sensor #GP-006 (Sala de Esterilización) alcanzó 252 µT.",
+                        LocalDateTime.of(2026, 10, 22, 13, 50), "#GP-006", pharmaUser, null),
+
+                seasonAlert("warning", "ph-wifi-slash",
+                        "Conectividad degradada — Harbor Medical Center",
+                        "El monitor #HM-007 perdió 12 % de los paquetes en la última hora.",
+                        LocalDateTime.of(2026, 10, 26, 11, 25), "#HM-007", harborUser, null),
+
+                seasonAlert("info", "ph-clipboard-text",
+                        "Orden de instalación programada — Global Pharma Corp",
+                        "WO-6103 asignada a Marcus Rivera para el 12 de noviembre.",
+                        LocalDateTime.of(2026, 10, 27, 17, 0), null, pharmaUser, null),
+
+                seasonAlert("warning", "ph-warning",
+                        "Revisión de blindaje pendiente — Global Pharma Corp",
+                        "El Lab. Farmacéutico acumula 14 días en DANGER. Orden WO-6106 creada.",
+                        LocalDateTime.of(2026, 11, 6, 9, 0), "#GP-004", pharmaUser, null),
+
+                seasonAlert("info", "ph-shield-check",
+                        "Auditoría mensual completada — noviembre",
+                        "Las tres sedes superaron la revisión mensual de cumplimiento.",
+                        LocalDateTime.of(2026, 11, 28, 18, 30), null, null, null),
+
+                seasonAlert("info", "ph-calendar-check",
+                        "Cierre de año programado",
+                        "Revisiones de diciembre agendadas en las tres sedes (WO-6105, WO-6106).",
+                        LocalDateTime.of(2026, 12, 1, 8, 0), null, null, null),
+
+                seasonAlert("success", "ph-check-circle",
+                        "Mantenimiento de cierre completado — Harbor Medical Center",
+                        "WO-6105 cerrada. 7 sensores revisados, ninguno fuera de rango.",
+                        LocalDateTime.of(2026, 12, 11, 13, 15), null, harborUser,
+                        LocalDateTime.of(2026, 12, 11, 13, 15))
+        );
+        alertRepository.saveAll(seasonAlerts);
+        log.info("Seeded {} alerts ({} base + {} oct–dic)",
+                alerts.size() + seasonAlerts.size(), alerts.size(), seasonAlerts.size());
+    }
+
+    /**
+     * Alarma de la temporada oct–dic con fecha fija. Cuando {@code client} viene
+     * null la alarma va dirigida a todos; {@code resolvedAt} no null la deja ya
+     * atendida.
+     */
+    private Alert seasonAlert(String type, String icon, String title, String description,
+                              LocalDateTime createdAt, String sensor, AppUser client,
+                              LocalDateTime resolvedAt) {
+        Alert alert = Alert.builder()
+                .type(type).icon(icon)
+                .title(title).description(description)
+                .sensor(sensor)
+                .createdAt(createdAt)
+                .resolved(resolvedAt != null)
+                .resolvedAt(resolvedAt)
+                .build();
+        if (client != null) {
+            alert.addressTo(List.of(client.getId()), client.getName());
+        } else {
+            alert.addressToEveryone();
+        }
+        return alert;
     }
 
     // ─── History ──────────────────────────────────────────────────────────────
@@ -843,7 +1203,68 @@ public class DataInitializer implements CommandLineRunner {
                         "Installation", "Sarah Jenkins", "SJ", "cancelled", sarahId)
         );
         historyRepository.saveAll(records);
-        log.info("Seeded {} history records", records.size());
+
+        // ── Temporada oct–dic 2026 ───────────────────────────────────────────
+        // Los orderId repiten los de las órdenes cerradas de seedWorkOrders para
+        // que el historial y la lista de órdenes cuenten lo mismo.
+        List<History> seasonRecords = List.of(
+                hist("#WO-9301", LocalDate.of(2026, 10, 2), "08:30 AM",
+                        "Northwind Energy", "Substation 4 - East Yard, Austin TX",
+                        "Maintenance", "Marcus Rivera", "MR", "completed", marcusId),
+                hist("#WO-9302", LocalDate.of(2026, 10, 6), "10:00 AM",
+                        "Bay General Hospital", "Radiology - 2nd Floor, Oakland CA",
+                        "Installation", "Sarah Jenkins", "SJ", "completed", sarahId),
+                hist("#WO-6101", LocalDate.of(2026, 10, 8), "09:00 AM",
+                        "Quantum Dynamics Lab", "Av. Universitaria 1801, San Miguel",
+                        "Maintenance", "Marcus Rivera", "MR", "completed", marcusId),
+                hist("#WO-9303", LocalDate.of(2026, 10, 9), "09:15 AM",
+                        "Atlas Semiconductor", "Clean Room B4, Phoenix AZ",
+                        "Collection", "Elena Rodriguez", "ER", "completed", elenaId),
+                hist("#WO-9304", LocalDate.of(2026, 10, 14), "13:00 PM",
+                        "Urban Health Trust", "North Wing Lab, Seattle WA",
+                        "Maintenance", "Sarah Jenkins", "SJ", "completed", sarahId),
+                hist("#WO-9298", LocalDate.of(2026, 10, 17), "15:30 PM",
+                        "Terminal Portuario Callao", "Av. Óscar R. Benavides, Callao",
+                        "Collection", "Elena Rodriguez", "ER", "cancelled", elenaId),
+                hist("#WO-9299", LocalDate.of(2026, 10, 21), "11:00 AM",
+                        "Jockey Plaza Shopping Center", "Av. Jockey, Santiago de Surco",
+                        "Maintenance", "Marcus Rivera", "MR", "completed", marcusId),
+
+                hist("#WO-9308", LocalDate.of(2026, 11, 4), "09:00 AM",
+                        "Greenfield Labs", "Sector 7 - Annex, Boston MA",
+                        "Installation", "Marcus Rivera", "MR", "completed", marcusId),
+                hist("#WO-9309", LocalDate.of(2026, 11, 10), "10:30 AM",
+                        "Pacific Heights Clinic", "Wing B - MRI Suite, San Francisco CA",
+                        "Maintenance", "Sarah Jenkins", "SJ", "completed", sarahId),
+                hist("#WO-6103", LocalDate.of(2026, 11, 12), "08:30 AM",
+                        "Global Pharma Corp", "Av. El Sol 455, Villa El Salvador",
+                        "Installation", "Marcus Rivera", "MR", "completed", marcusId),
+                hist("#WO-9310", LocalDate.of(2026, 11, 17), "14:00 PM",
+                        "Nexus Research Lab", "Quantum Lab - Sub B, Chicago IL",
+                        "Collection", "Elena Rodriguez", "ER", "cancelled", elenaId),
+                hist("#WO-6104", LocalDate.of(2026, 11, 24), "14:00 PM",
+                        "Quantum Dynamics Lab", "Av. Universitaria 1801, San Miguel",
+                        "Collection", "Marcus Rivera", "MR", "completed", marcusId),
+
+                hist("#WO-9312", LocalDate.of(2026, 12, 2), "09:30 AM",
+                        "Urban Health Trust", "South Wing - Oncology, Seattle WA",
+                        "Maintenance", "Marcus Rivera", "MR", "completed", marcusId),
+                hist("#WO-9313", LocalDate.of(2026, 12, 9), "11:00 AM",
+                        "Atlas Semiconductor", "Clean Room A1, Phoenix AZ",
+                        "Collection", "Sarah Jenkins", "SJ", "completed", sarahId),
+                hist("#WO-6105", LocalDate.of(2026, 12, 11), "10:00 AM",
+                        "Harbor Medical Center", "Av. Javier Prado Oeste 499, San Isidro",
+                        "Maintenance", "Marcus Rivera", "MR", "completed", marcusId),
+                hist("#WO-9314", LocalDate.of(2026, 12, 15), "08:00 AM",
+                        "Bay General Hospital", "Emergency Wing - Ground, Oakland CA",
+                        "Installation", "Elena Rodriguez", "ER", "completed", elenaId),
+                hist("#WO-6106", LocalDate.of(2026, 12, 19), "08:00 AM",
+                        "Global Pharma Corp", "Av. El Sol 455, Villa El Salvador",
+                        "Maintenance", "Marcus Rivera", "MR", "completed", marcusId)
+        );
+        historyRepository.saveAll(seasonRecords);
+        log.info("Seeded {} history records ({} base + {} oct–dic)",
+                records.size() + seasonRecords.size(), records.size(), seasonRecords.size());
     }
 
     // ─── Builder helpers ──────────────────────────────────────────────────────

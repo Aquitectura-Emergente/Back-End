@@ -75,9 +75,18 @@ public class DashboardService {
         List<Integer> activitySeries = List.of(5, 14, 10, 22, 18, 30, 26, 38, 32, 45, 40, 52);
         List<String> activityCats = List.of("01 May", "", "", "10 May", "", "", "20 May", "", "", "", "30 May", "");
 
-        List<RadiationReading> readings = radiationReadingRepository.findAllSorted();
-        List<Double> radSeries = readings.stream()
-                .map(RadiationReading::getValue)
+        // Un punto por DÍA (promedio de los sensores que reportaron ese día). La
+        // serie cruda son todas las lecturas de todos los sensores intercaladas:
+        // con el edge ingestando varias al día no cabe en el gráfico, y como
+        // "tendencia" no dice nada — salta entre sensores de sedes distintas.
+        List<Double> radSeries = radiationReadingRepository.findAllSorted().stream()
+                .filter(r -> r.getReadingDate() != null && r.getValue() != null)
+                .collect(Collectors.groupingBy(
+                        RadiationReading::getReadingDate,
+                        TreeMap::new,
+                        Collectors.averagingDouble(RadiationReading::getValue)))
+                .values().stream()
+                .map(avg -> Math.round(avg * 10.0) / 10.0)
                 .toList();
 
         long tx = countByState("TX");
