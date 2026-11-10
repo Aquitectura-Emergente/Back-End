@@ -8,7 +8,12 @@ import org.springframework.test.context.TestPropertySource;
 @SpringBootTest
 @ActiveProfiles("test")
 @TestPropertySource(properties = {
-        "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1",
+        // NON_KEYWORDS=VALUE: H2 2.x reserva VALUE, y la columna
+        // radiation_readings.value se llama así. Sin esto el create-drop de
+        // Hibernate falla con un error de sintaxis y el contexto no arranca.
+        // Este test estaba rojo antes de tocar nada (verificado en origin/develop),
+        // oculto porque el CI y el Dockerfile compilan con -DskipTests.
+        "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;NON_KEYWORDS=VALUE",
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
