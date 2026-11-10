@@ -71,6 +71,7 @@ public class UserService {
                 .joinDate(req.joinDate() != null ? req.joinDate() : LocalDate.now())
                 .status(UserStatus.ACTIVE)
                 .notes(req.notes())
+                .organizationId(req.organizationId())
                 .build();
 
         return UserDto.from(userRepository.save(user));
@@ -108,6 +109,7 @@ public class UserService {
         if (req.contactName() != null) user.setContactName(req.contactName());
         if (req.contactEmail() != null) user.setContactEmail(req.contactEmail());
         if (req.contactPhone() != null) user.setContactPhone(req.contactPhone());
+        if (req.organizationId() != null) user.setOrganizationId(req.organizationId());
         if (StringUtils.hasText(req.password())) {
             user.setPasswordHash(passwordEncoder.encode(req.password()));
         }

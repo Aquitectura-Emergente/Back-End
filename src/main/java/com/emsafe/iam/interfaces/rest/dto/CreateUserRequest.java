@@ -28,5 +28,12 @@ public record CreateUserRequest(
         String specialty,
         String department,
         LocalDate joinDate,
-        String notes
+        String notes,
+
+        /**
+         * Organización del segmento industrial. Obligatoria de hecho para los
+         * roles SSO y WORKER: sin ella la cuenta no puede ver ni decidir nada en
+         * Occupational Health. Nula para ADMIN, TECHNICIAN y CLIENT.
+         */
+        Long organizationId
 ) {}

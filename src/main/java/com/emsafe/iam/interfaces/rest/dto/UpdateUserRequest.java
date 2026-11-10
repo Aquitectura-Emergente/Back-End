@@ -23,5 +23,8 @@ public record UpdateUserRequest(
         String country,
         String contactName,
         String contactEmail,
-        String contactPhone
+        String contactPhone,
+
+        /** Organización del segmento industrial — ver CreateUserRequest. */
+        Long organizationId
 ) {}

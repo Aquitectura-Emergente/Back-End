@@ -48,6 +48,14 @@ public class SecurityConfig {
                                 "/swagger-ui.html",
                                 "/v3/api-docs/**"
                         ).permitAll()
+                        // Occupational Health & Mitigation (segmento industrial).
+                        // DEBE declararse ANTES del permitAll de /api/v1/**: comparte
+                        // ese prefijo y, sin esta regla, aprobar una medida de
+                        // mitigación quedaría abierto a cualquiera sin autenticar.
+                        // El filtrado fino (SSO decide, operario solo lo suyo) lo hace
+                        // MitigationAccessPolicy; aquí solo se cierra la puerta.
+                        .requestMatchers("/api/v1/occupational-health/**")
+                                .hasAnyRole("SSO", "WORKER", "ADMIN")
                         // IoT telemetry (edge ingestion + web/mobile consumption).
                         // Público por ahora: el edge no tiene JWT. Endurecer luego
                         // (API key en el POST, JWT en el GET) si se requiere.

@@ -1,6 +1,7 @@
 package com.emsafe.iam.interfaces.rest.dto;
 
 import com.emsafe.iam.domain.model.AppUser;
+import com.emsafe.iam.domain.model.Role;
 
 import java.time.LocalDate;
 
@@ -24,19 +25,16 @@ public record UserDto(
         String country,
         String contactName,
         String contactEmail,
-        String contactPhone
+        String contactPhone,
+        Long organizationId
 ) {
     public static UserDto from(AppUser u) {
-        // Serialize role as title-case to match Angular frontend ("Admin", "Technician", "Client")
-        String roleName = u.getRole().name();
-        String roleDisplay = roleName.charAt(0) + roleName.substring(1).toLowerCase();
-
         return new UserDto(
                 u.getId(),
                 u.getName(),
                 u.getInitials(),
                 u.getEmail(),
-                roleDisplay,
+                display(u.getRole()),
                 u.getPhone(),
                 u.getLocation(),
                 u.getStatus(),
@@ -51,7 +49,21 @@ public record UserDto(
                 u.getCountry(),
                 u.getContactName(),
                 u.getContactEmail(),
-                u.getContactPhone()
+                u.getContactPhone(),
+                u.getOrganizationId()
         );
+    }
+
+    /**
+     * El rol en title-case, que es como lo espera el front de Angular
+     * ("Admin", "Technician", "Client").
+     *
+     * SSO es un acrónimo y se queda en mayúsculas: el title-case genérico lo
+     * convertiría en "Sso".
+     */
+    private static String display(Role role) {
+        if (role == Role.SSO) return "SSO";
+        String name = role.name();
+        return name.charAt(0) + name.substring(1).toLowerCase();
     }
 }

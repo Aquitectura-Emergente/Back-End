@@ -93,6 +93,14 @@ public class AppUser {
     @Column(name = "contact_phone", length = 30)
     private String contactPhone;
 
+    // ── Segmento industrial ───────────────────────────────────────────────────
+    /**
+     * Organización (planta / empresa) a la que pertenece un SSO o un operario.
+     * Nula en las cuentas del segmento hogar, que no tienen tenencia.
+     */
+    @Column(name = "organization_id")
+    private Long organizationId;
+
     // ─── Comportamiento del agregado ──────────────────────────────────────────
 
     /** Cuenta habilitada. Distinto del estado de un dispositivo, pese al nombre. */
@@ -107,6 +115,15 @@ public class AppUser {
 
     public boolean hasRole(Role expected) {
         return role == expected;
+    }
+
+    /**
+     * Pertenece a la organización indicada. Una cuenta sin organización (todo el
+     * segmento hogar) no pertenece a ninguna, así que nunca ve datos
+     * industriales por descuido.
+     */
+    public boolean belongsTo(Long organization) {
+        return organizationId != null && organizationId.equals(organization);
     }
 
     /**
