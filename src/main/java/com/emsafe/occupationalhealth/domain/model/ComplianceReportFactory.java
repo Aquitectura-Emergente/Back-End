@@ -31,9 +31,16 @@ public class ComplianceReportFactory {
      */
     public ComplianceReport forWorker(Long organizationId, Long workerId, ReportPeriod period,
                                       int version, Long generatedBy,
+                                      List<MitigationAction> allActions,
                                       List<ClosedSessionRecord> sessions,
-                                      List<MitigationAction> actions,
                                       List<AlertEvidenceRecord> alerts) {
+        // Una propuesta desplazada no es una medida tomada ni constancia de que
+        // no hubiera alternativa: queda fuera del reporte. Sigue en la bitácora
+        // del agregado, que es append-only.
+        List<MitigationAction> actions = allActions.stream()
+                .filter(a -> a.getState().isReportableEvidence())
+                .toList();
+
         ComplianceReport report = ComplianceReport.builder()
                 .organizationId(organizationId)
                 .scope(ReportScope.WORKER)

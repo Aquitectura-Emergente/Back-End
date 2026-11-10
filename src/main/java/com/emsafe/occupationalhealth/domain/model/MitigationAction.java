@@ -272,19 +272,19 @@ public class MitigationAction {
     /**
      * Una sugerencia nueva desplaza a esta propuesta (regla 5).
      *
-     * OJO — el informe exige que el reemplazo "deje constancia", pero no dice a
-     * qué estado pasa la desplazada, y los seis estados de §5.6.1 no incluyen
-     * uno para esto. Se cierra como NOT_VIABLE porque es el único terminal que
-     * no afirma una decisión humana que nadie tomó; el motivo real queda en
-     * outcome y en superseded_by_id. Si el informe se corrige con un estado
-     * SUPERSEDED, este método y el CHECK de V13 son lo único que cambia.
+     * Pasa a SUPERSEDED, un estado que el informe §5.6.1 no contempla y que se
+     * añadió a propósito: reutilizar NOT_VIABLE haría que un reporte de
+     * cumplimiento —registro legal a cinco años— afirmara que no se encontró
+     * rotación viable, cuando lo único que pasó es que llegó una propuesta
+     * posterior. El motivo queda además en outcome y en superseded_by_id.
      */
     public void supersedeBy(MitigationAction replacement) {
         if (!state.isOpen()) {
             throw new MitigationRuleException(
                     "Only an open action can be superseded, this one is " + state);
         }
-        declareNotViable("Superseded by a newer suggestion");
+        transitionTo(MitigationState.SUPERSEDED, null);
+        this.outcome = "Superseded by action #" + replacement.getId();
         this.supersededById = replacement.getId();
     }
 

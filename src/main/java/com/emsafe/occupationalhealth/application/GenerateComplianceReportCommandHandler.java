@@ -116,7 +116,7 @@ public class GenerateComplianceReportCommandHandler {
         List<AlertEvidenceRecord> alerts = alertEvidence.findByWorker(organizationId, workerId);
 
         return factory.forWorker(organizationId, workerId, period, version, generatedBy,
-                sessions, actions, alerts);
+                actions, sessions, alerts);
     }
 
     /**

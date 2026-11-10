@@ -122,7 +122,7 @@ class MitigationActionTest {
     }
 
     @Test
-    @DisplayName("una propuesta desplazada se cierra y apunta a la que la reemplaza")
+    @DisplayName("una propuesta desplazada pasa a SUPERSEDED, no a NOT_VIABLE")
     void supersededProposalIsClosed() {
         MitigationAction old = proposalOf(MitigationType.ROTATION);
         MitigationAction replacement = proposalOf(MitigationType.RELOCATION);
@@ -130,9 +130,35 @@ class MitigationActionTest {
 
         old.supersedeBy(replacement);
 
-        assertEquals(MitigationState.NOT_VIABLE, old.getState());
+        assertEquals(MitigationState.SUPERSEDED, old.getState());
         assertEquals(123L, old.getSupersededById());
-        assertTrue(old.getOutcome().contains("Superseded"));
+        assertTrue(old.getOutcome().contains("#123"), "la constancia nombra a la que reemplaza");
+        assertEquals(MitigationState.SUPERSEDED,
+                old.getHistory().get(old.getHistory().size() - 1).getToState(),
+                "la transición queda en la bitácora");
+    }
+
+    @Test
+    @DisplayName("una desplazada no cuenta como evidencia en un reporte")
+    void supersededIsNotReportableEvidence() {
+        assertFalse(MitigationState.SUPERSEDED.isReportableEvidence(),
+                "no es una medida tomada ni constancia de que no hubiera alternativa");
+        assertTrue(MitigationState.NOT_VIABLE.isReportableEvidence(),
+                "NOT_VIABLE sí: constata que se buscó y no había candidato");
+        assertTrue(MitigationState.REJECTED.isReportableEvidence(),
+                "y un rechazo es evidencia de que alguien decidió");
+    }
+
+    @Test
+    @DisplayName("una acción ya aprobada todavía puede quedar desplazada")
+    void approvedCanStillBeSuperseded() {
+        MitigationAction approved = approvedRelocation();
+        MitigationAction replacement = proposalOf(MitigationType.ROTATION);
+        replacement.setId(456L);
+
+        approved.supersedeBy(replacement);
+
+        assertEquals(MitigationState.SUPERSEDED, approved.getState());
     }
 
     @Test

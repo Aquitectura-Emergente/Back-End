@@ -41,10 +41,30 @@ class ComplianceReportTest {
     // ── Regla 7: inmutabilidad y versionado ──────────────────────────────────
 
     @Test
+    @DisplayName("una acción desplazada no entra en el reporte")
+    void supersededActionIsExcluded() {
+        MitigationAction superseded = MitigationAction.propose(ORG, MitigationType.ROTATION,
+                MitigationOrigin.MANUAL, MitigationTrigger.manual(), "desplazada");
+        MitigationAction replacement = MitigationAction.propose(ORG, MitigationType.RELOCATION,
+                MitigationOrigin.MANUAL, MitigationTrigger.manual(), "la nueva");
+        replacement.setId(99L);
+        superseded.supersedeBy(replacement);
+
+        ComplianceReport report = factory.forWorker(ORG, WORKER, november(), 1, 99L,
+                List.of(superseded), List.of(session("s1", "400", "COMPLETE")), List.of());
+
+        boolean mentionsIt = report.getEntries().stream()
+                .flatMap(e -> e.sourceReferences().stream())
+                .anyMatch(s -> s.getType() == ReportEntrySource.SourceType.ACTION);
+        assertFalse(mentionsIt,
+                "un registro legal a 5 años no puede afirmar una medida que no se tomó");
+    }
+
+    @Test
     @DisplayName("un reporte recién sellado verifica su propia evidencia")
     void sealedReportVerifiesItsEvidence() {
         ComplianceReport report = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "400", "COMPLETE")), List.of(), List.of());
+                List.of(), List.of(session("s1", "400", "COMPLETE")), List.of());
 
         assertNotNull(report.getEvidenceDigest());
         assertEquals(EvidenceDigest.SHA_256, report.getEvidenceDigest().getAlgorithm());
@@ -55,9 +75,9 @@ class ComplianceReportTest {
     @DisplayName("dos reportes con distinto contenido tienen distinto digest")
     void differentContentYieldsDifferentDigest() {
         ComplianceReport a = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "400", "COMPLETE")), List.of(), List.of());
+                List.of(), List.of(session("s1", "400", "COMPLETE")), List.of());
         ComplianceReport b = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "500", "COMPLETE")), List.of(), List.of());
+                List.of(), List.of(session("s1", "500", "COMPLETE")), List.of());
 
         assertNotEquals(a.getEvidenceDigest().getValue(), b.getEvidenceDigest().getValue());
     }
@@ -66,9 +86,9 @@ class ComplianceReportTest {
     @DisplayName("la versión entra en el digest: dos versiones nunca son iguales")
     void versionIsPartOfTheDigest() {
         ComplianceReport v1 = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "400", "COMPLETE")), List.of(), List.of());
+                List.of(), List.of(session("s1", "400", "COMPLETE")), List.of());
         ComplianceReport v2 = factory.forWorker(ORG, WORKER, november(), 2, 99L,
-                List.of(session("s1", "400", "COMPLETE")), List.of(), List.of());
+                List.of(), List.of(session("s1", "400", "COMPLETE")), List.of());
 
         assertNotEquals(v1.getEvidenceDigest().getValue(), v2.getEvidenceDigest().getValue());
     }
@@ -77,7 +97,7 @@ class ComplianceReportTest {
     @DisplayName("marcar exportado no mueve la marca original")
     void markExportedIsIdempotent() {
         ComplianceReport report = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "400", "COMPLETE")), List.of(), List.of());
+                List.of(), List.of(session("s1", "400", "COMPLETE")), List.of());
 
         report.markExported("org-7/report-1-v1.pdf");
         LocalDateTime first = report.getExportedAt();
@@ -93,7 +113,7 @@ class ComplianceReportTest {
     @DisplayName("exportar no altera el contenido ni invalida la evidencia")
     void exportingDoesNotBreakTheDigest() {
         ComplianceReport report = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "400", "COMPLETE")), List.of(), List.of());
+                List.of(), List.of(session("s1", "400", "COMPLETE")), List.of());
 
         report.markExported("org-7/report-1-v1.pdf");
 
@@ -107,8 +127,9 @@ class ComplianceReportTest {
     @DisplayName("cada entrada referencia al menos su jornada de origen")
     void everyEntryReferencesItsSource() {
         ComplianceReport report = factory.forWorker(ORG, WORKER, november(), 1, 99L,
+                List.of(),
                 List.of(session("s1", "400", "COMPLETE"), session("s2", "600", "COMPLETE")),
-                List.of(), List.of());
+                List.of());
 
         assertEquals(2, report.getEntries().size());
         assertEquals(0, report.entriesWithoutSource());
@@ -120,7 +141,7 @@ class ComplianceReportTest {
     @DisplayName("una jornada con cobertura incompleta lleva nota de trazabilidad")
     void incompleteCoverageAddsATraceNote() {
         ComplianceReport report = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "400", "PARTIAL")), List.of(), List.of());
+                List.of(), List.of(session("s1", "400", "PARTIAL")), List.of());
 
         ReportEntry entry = report.getEntries().get(0);
         assertEquals(1, entry.getTraceNotes().size());
@@ -132,7 +153,7 @@ class ComplianceReportTest {
     @DisplayName("una jornada completa no genera notas")
     void completeCoverageAddsNoNotes() {
         ComplianceReport report = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "400", "COMPLETE")), List.of(), List.of());
+                List.of(), List.of(session("s1", "400", "COMPLETE")), List.of());
 
         assertTrue(report.getEntries().get(0).getTraceNotes().isEmpty());
     }
@@ -145,7 +166,7 @@ class ComplianceReportTest {
                 .alertType("DANGER").build();
 
         ComplianceReport report = factory.forWorker(ORG, WORKER, november(), 1, 99L,
-                List.of(session("s1", "400", "COMPLETE")), List.of(), List.of(alert));
+                List.of(), List.of(session("s1", "400", "COMPLETE")), List.of(alert));
 
         List<ReportEntrySource> sources = report.getEntries().get(0).sourceReferences();
         assertTrue(sources.stream().anyMatch(
