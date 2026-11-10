@@ -72,7 +72,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "emsafe.occupational-health.retention-enabled=false",
         "emsafe.occupational-health.report-storage-path=./target/test-compliance-reports"
 })
-class OccupationalHealthApiIT {
+class OccupationalHealthApiIntegrationTest {
 
     private static final String SSO_EMAIL = "sso-it@emsafe.test";
     private static final String WORKER_EMAIL = "worker-it@emsafe.test";
