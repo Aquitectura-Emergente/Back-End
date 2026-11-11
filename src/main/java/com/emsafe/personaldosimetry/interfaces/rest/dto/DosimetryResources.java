@@ -51,4 +51,11 @@ public final class DosimetryResources {
 
     public record Ingestion(Reading reading, boolean duplicate, Session session) {}
     public record Event(String eventId, String eventType, Long organizationId, JsonNode payload, Instant occurredAt) {}
+    public record AccessAudit(String id, String principalName, String httpMethod, String resourcePath,
+                              int responseStatus, Instant occurredAt) {
+        public static AccessAudit from(DosimetryAccessAudit audit) {
+            return new AccessAudit(audit.getId(), audit.getPrincipalName(), audit.getHttpMethod(),
+                    audit.getResourcePath(), audit.getResponseStatus(), audit.getOccurredAt());
+        }
+    }
 }

@@ -1,6 +1,8 @@
 package com.emsafe.shared.config;
 
 import com.emsafe.iam.infrastructure.security.JwtAuthFilter;
+import com.emsafe.personaldosimetry.application.DosimetryAuditService;
+import com.emsafe.personaldosimetry.interfaces.rest.DosimetryAccessAuditFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -33,6 +35,7 @@ public class SecurityConfig {
     private final JwtAuthFilter jwtAuthFilter;
     private final UserDetailsService userDetailsService;
     private final CorsConfigurationSource corsConfigurationSource;
+    private final DosimetryAuditService dosimetryAudit;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -74,6 +77,7 @@ public class SecurityConfig {
                 )
                 .authenticationProvider(authenticationProvider())
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(new DosimetryAccessAuditFilter(dosimetryAudit), JwtAuthFilter.class)
                 .build();
     }
 

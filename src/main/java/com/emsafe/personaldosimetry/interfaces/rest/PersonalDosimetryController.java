@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 public class PersonalDosimetryController {
     private final PersonalDosimetryService service;
     private final DosimetryAccessPolicy access;
+    private final DosimetryAuditService audit;
 
     @PostMapping("/memberships")
     public ResponseEntity<ApiResponse<Membership>> grant(Authentication auth, @Valid @RequestBody GrantMembership body) {
@@ -94,6 +95,13 @@ public class PersonalDosimetryController {
     public ResponseEntity<Void> acknowledge(Authentication auth, @PathVariable String id) {
         service.acknowledgeEvent(actor(auth), id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/audit")
+    public ApiResponse<PageResponse<AccessAudit>> audit(Authentication auth,
+                                                       @RequestParam(defaultValue = "0") int page,
+                                                       @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(audit.list(actor(auth), page, size));
     }
 
     private DosimetryActor actor(Authentication auth) {

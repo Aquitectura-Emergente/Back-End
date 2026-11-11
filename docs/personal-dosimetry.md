@@ -1,6 +1,6 @@
 # Personal Dosimetry & Exposure
 
-Primera entrega funcional del contexto de dosimetría personal. El módulo está en
+Implementación local del contexto de dosimetría personal. El módulo está en
 com.emsafe.personaldosimetry, con capas domain, application, interfaces e infrastructure.
 
 ## Cálculo y reglas
@@ -59,6 +59,7 @@ Prefijo: /api/v1/personal-dosimetry. Las respuestas reutilizan ApiResponse y Pag
 | GET | /workers/{workerId}/sessions | Operario propietario, SSO de la empresa o ADMIN |
 | GET | /outbox | ADMIN |
 | POST | /outbox/{id}/ack | ADMIN |
+| GET | /audit | ADMIN |
 
 Los listados aceptan page (desde 0) y size (1 a 200).
 
@@ -131,10 +132,11 @@ el porcentaje redondeado.
 
 ## Persistencia y eventos
 
-V16__personal_dosimetry.sql añade las cinco tablas del módulo en MySQL. No contiene
-cambios destructivos de tablas anteriores. V13-V15 están reservadas por la rama
-feature/occupational-health-mitigation: deben coordinarse ambas ramas y su orden de
-migraciones antes del despliegue compartido.
+V16__personal_dosimetry.sql añade las cinco tablas iniciales del módulo en MySQL.
+V17__personal_dosimetry_access_audit.sql añade la auditoría de accesos denegados.
+No contienen cambios destructivos de tablas anteriores. V13-V15 se dejaron libres
+para Occupational Health: deben revisarse las migraciones de ambas ramas y su orden
+antes del despliegue compartido.
 
 Cada jornada conserva el ID y los valores de su versión de límite. Los cambios de
 configuración posteriores afectan a nuevas jornadas. Las lecturas se almacenan separadas
@@ -156,6 +158,35 @@ mientras disminuye el conjunto.
 Esta entrega no incorpora un publicador de Azure Service Bus ni sustituye la notificación
 de Alerts. Conserva los hechos pendientes para que el adaptador de integración los publique.
 
+## Auditoría y retención
+
+El filtro del contexto registra los rechazos de autenticación/autorización 401 y 403
+que pasan por su cadena de seguridad. Conserva la cuenta autenticada (null si es anónima),
+el método HTTP, la ruta sin parámetros de consulta, el estado HTTP y el instante UTC.
+No almacena cabeceras, tokens ni cuerpos de petición. GET /audit pagina los registros
+y exige ADMIN; un SSO no puede consultar la auditoría global de otras empresas.
+
+El registro usa una transacción independiente para sobrevivir al rollback de la operación
+rechazada. Si la base está indisponible, el acceso sigue rechazado y se emite un error
+operacional en el log; no se garantiza persistencia de esa evidencia durante la caída.
+
+La limpieza programada opera solo sobre auditorías y eventos de outbox ya confirmados.
+Ambos plazos valen 0 por defecto: no se elimina nada hasta configurar una política.
+Los siguientes son los valores iniciales, no una recomendación de plazos:
+
+~~~properties
+emsafe.personal-dosimetry.retention.audit-days=0
+emsafe.personal-dosimetry.retention.published-event-days=0
+emsafe.personal-dosimetry.retention.batch-size=500
+emsafe.personal-dosimetry.retention.cleanup-interval=PT1H
+~~~
+
+Cada ejecución elimina como máximo batch-size registros por categoría. El plazo de los
+eventos empieza en publishedAt (confirmación del consumidor). Los eventos pendientes,
+las jornadas, las lecturas y las versiones de límites se conservan. Los plazos concretos
+del entorno compartido y la retención de evidencia de exposición requieren una decisión
+del proyecto; no se ha inventado un plazo normativo.
+
 ## Pruebas y revisión
 
 Con Java 17, desde la raíz del repositorio, en Windows:
@@ -168,18 +199,72 @@ $env:JAVA_HOME = 'RUTA_DE_TU_JDK_17'
 Para ejecutar solo las pruebas del contexto:
 
 ~~~powershell
-.\mvnw.cmd '-Dtest=ExposureIndexTest,ExposureSessionTest,DosimetryActorTest,PersonalDosimetryApiTest' test
+.\mvnw.cmd '-Dtest=ExposureIndexTest,ExposureSessionTest,DosimetryActorTest,PersonalDosimetryApiTest,DosimetryRestartRecoveryTest,MysqlTestDatabaseTest' test
 ~~~
 
 Las pruebas de dominio comprueban fórmula, redondeo, fronteras, cierre, cobertura y permisos.
 Las pruebas de API levantan la aplicación completa con H2 en modo MySQL y un reloj fijo.
 Comprueban HTTP, JWT obligatorio, aislamiento por empresa y operario, membresías, versiones
 de límite, duplicados, intervalos superpuestos, datos atrasados, concurrencia y rollback si
-la outbox falla. La prueba de arranque existente conserva su inicialización de datos:
+la outbox falla. También verifican la auditoría independiente, la consulta administrativa,
+el fallo del almacenamiento de auditoría y los límites de la limpieza configurada.
+La prueba de arranque existente conserva su inicialización de datos:
 solo se adapta la palabra VALUE de H2 al esquema heredado.
 
-La suite local verificó 40 pruebas sin fallos: 21 de dominio, 18 de API y persistencia,
-y la prueba de arranque existente.
+La verificación local del 11 de noviembre de 2026 terminó con 57 pruebas, 0 fallos,
+0 errores y 0 omitidas: 21 de dominio, 28 de API/persistencia/carga, una de recuperación,
+seis del guardián de base MySQL y una de arranque. El perfil MySQL no se ejecutó.
+
+La prueba de carga usa seis productores concurrentes sobre una jornada: 240 capturas
+únicas y 80 reenvíos. Exige 240 lecturas persistidas, acumulado exacto de 120 uT*s y un
+solo evento por umbral. Genera target/dosimetry-load-PersonalDosimetryApiTest.json con
+duración, entregas por segundo y percentiles. Mide transacciones del servicio en el
+equipo local; no mide tráfico HTTP, el hardware ni la capacidad del despliegue.
+
+La prueba de recuperación cierra el contexto de Spring, su pool y EntityManagerFactory,
+y vuelve a abrirlos contra una base H2 en disco temporal. Verifica el acumulado, las
+lecturas, la auditoría y los eventos pendientes, y reenvía una captura sin duplicar su
+contribución. No simula un corte eléctrico ni reinicia el servidor de base de datos.
+
+El consumidor de prueba demuestra reentrega con el mismo eventId cuando falta /ack
+y deduplicación en el receptor simulado. No implementa almacenamiento durable del
+consumidor de Alerts ni comunicación real entre contextos.
+
+### MySQL: preparado, pendiente de ejecutar
+
+La validación real con MySQL quedó aplazada por falta de espacio en C:, a petición de
+Matias. No se presenta la suite H2 como validación de las migraciones MySQL.
+
+Cuando haya al menos 1 GB libre, con MySQL Server 8 y Java 17 instalados en Windows:
+
+~~~powershell
+$env:JAVA_HOME = 'RUTA_DE_TU_JDK_17'
+.\scripts\Test-PersonalDosimetryMySql.ps1
+~~~
+
+Si MySQL está en otra carpeta, pasar -MySqlHome 'RUTA_DE_MYSQL_SERVER_8'. El script crea
+una instancia temporal en target, enlazada a 127.0.0.1:13306, con base y contraseña
+aleatorias. Ejecuta el perfil mysql-it, apaga únicamente su proceso y retira sus datos
+temporales. No usa la base emsafe_db ni depende de Docker. Conserva el log de pruebas
+target/mysql-verification.log y el del servidor target/mysql-test-server.log.
+
+El perfil vuelve a ejecutar el mismo contrato de API, persistencia y carga contra MySQL,
+con Flyway habilitado y Hibernate en validate. Incluye una recuperación mediante dos
+contextos de aplicación contra esa base y una comprobación explícita de V16/V17.
+Las clases MysqlIT no se ejecutan con el comando test normal.
+
+Para una base de pruebas ya creada y descartable:
+
+~~~powershell
+$env:DOSIMETRY_MYSQL_URL = 'jdbc:mysql://127.0.0.1:13306/emsafe_pd_test?serverTimezone=UTC'
+$env:DOSIMETRY_MYSQL_USERNAME = 'USUARIO_DE_PRUEBAS'
+$env:DOSIMETRY_MYSQL_PASSWORD = 'CONTRASENA_DE_PRUEBAS'
+.\mvnw.cmd -Pmysql-it test
+~~~
+
+La suite modifica datos y exige un nombre emsafe_pd_test o emsafe_pd_test_<sufijo>.
+Debe usarse una base nueva para cada ejecución. Las pruebas del guardián de URL se
+ejecutan con H2; la ejecución completa del perfil MySQL sigue pendiente.
 
 Las pruebas H2 no certifican la migración en un servidor MySQL, los objetivos de carga o
 disponibilidad, ni una integración con el hardware.
@@ -189,8 +274,9 @@ disponibilidad, ni una integración con el hardware.
 - Acordar con IoT el contrato de intervalos y la confirmación real del lote pendiente.
 - Conectar el publicador de outbox con Alerts y los consumidores de los otros contextos.
 - Incorporar ShiftUpdated y el cálculo por segmentos cuando se integre Occupational Health.
-- Completar la auditoría persistente de accesos denegados y la política de retención.
-- Validar MySQL y ejecutar las pruebas de carga y continuidad con el entorno de despliegue.
+- Acordar los plazos de retención del entorno compartido y de la evidencia de exposición.
+- Ejecutar la validación MySQL preparada cuando se libere espacio.
+- Repetir carga y recuperación con HTTP y el entorno de despliegue.
 
-El estado actual es una primera entrega de jornadas, cálculo, consulta y persistencia.
+El estado actual incluye jornadas, cálculo, consulta, persistencia, auditoría y limpieza configurable.
 Estos puntos pendientes no se presentan como funcionalidades ya implementadas.
