@@ -5,6 +5,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -38,6 +41,9 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
+                        new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED),
+                        new AntPathRequestMatcher("/api/v1/personal-dosimetry/**")))
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints
                         .requestMatchers(HttpMethod.POST,
@@ -51,6 +57,7 @@ public class SecurityConfig {
                         // IoT telemetry (edge ingestion + web/mobile consumption).
                         // Público por ahora: el edge no tiene JWT. Endurecer luego
                         // (API key en el POST, JWT en el GET) si se requiere.
+                        .requestMatchers("/api/v1/personal-dosimetry/**").authenticated()
                         .requestMatchers("/api/v1/**").permitAll()
                         // WebSocket handshake (STOMP) — real-time telemetry push (no JWT, like /api/v1).
                         .requestMatchers("/ws/**").permitAll()
