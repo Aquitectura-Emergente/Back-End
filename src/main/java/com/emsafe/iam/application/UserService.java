@@ -54,6 +54,8 @@ public class UserService {
             throw new BadRequestException("Email already in use: " + req.email());
         }
 
+        Long organizationId = resolveOrganization(req);
+
         String initials = StringUtils.hasText(req.initials())
                 ? req.initials()
                 : Initials.from(req.name());
@@ -71,9 +73,32 @@ public class UserService {
                 .joinDate(req.joinDate() != null ? req.joinDate() : LocalDate.now())
                 .status(UserStatus.ACTIVE)
                 .notes(req.notes())
+                .organizationId(organizationId)
                 .build();
 
         return UserDto.from(userRepository.save(user));
+    }
+
+    /**
+     * WORKER y SSO_RESPONSIBLE deben pertenecer a una organización válida (una
+     * cuenta CLIENT existente). Los demás roles no llevan organización.
+     */
+    private Long resolveOrganization(CreateUserRequest req) {
+        if (!req.role().isIndustrial()) {
+            if (req.organizationId() != null) {
+                throw new BadRequestException(
+                        "organizationId only applies to WORKER and SSO_RESPONSIBLE accounts");
+            }
+            return null;
+        }
+        if (req.organizationId() == null) {
+            throw new BadRequestException("organizationId is required for " + req.role().name());
+        }
+        AppUser org = userRepository.findById(req.organizationId())
+                .filter(u -> u.hasRole(Role.CLIENT))
+                .orElseThrow(() -> new BadRequestException(
+                        "Invalid organization: " + req.organizationId()));
+        return org.getId();
     }
 
     @Transactional
@@ -130,6 +155,10 @@ public class UserService {
     public void delete(Long id) {
         if (!userRepository.existsById(id)) {
             throw new ResourceNotFoundException("User", id);
+        }
+        if (userRepository.existsByOrganizationId(id)) {
+            throw new BadRequestException(
+                    "Cannot delete an organization that still has worker or SSO accounts");
         }
         userRepository.deleteById(id);
     }
