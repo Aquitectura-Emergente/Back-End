@@ -9,6 +9,7 @@ import com.emsafe.shared.dto.PageResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/ai-forecasting/outbox")
 @Tag(name = "AI Forecasting - Outbox",
         description = "Eventos salientes (RotationSuggested, PredictiveRiskDetected) pendientes de publicar. Solo ADMIN.")
+@PreAuthorize("hasRole('ADMIN')")
 public class AiForecastingOutboxController {
 
     private final OutboxQueryHandler outbox;

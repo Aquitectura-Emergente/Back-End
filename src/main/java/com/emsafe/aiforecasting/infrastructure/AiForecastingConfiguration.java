@@ -48,9 +48,13 @@ public class AiForecastingConfiguration {
     public static final String CLOCK = "aiForecastingClock";
     private static final Logger log = LoggerFactory.getLogger(AiForecastingConfiguration.class);
 
+    /**
+     * Reloj UTC con resolución de microsegundos, la misma de DATETIME(6): así un instante
+     * devuelto antes de persistir es idéntico al que se lee después (p. ej. el ack del outbox).
+     */
     @Bean(CLOCK)
     Clock aiForecastingClock() {
-        return Clock.systemUTC();
+        return Clock.tick(Clock.systemUTC(), Duration.ofNanos(1_000));
     }
 
     // ─── Dominio ─────────────────────────────────────────────────────────────
