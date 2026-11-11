@@ -3,6 +3,8 @@ package com.emsafe.aiforecasting.infrastructure;
 import com.emsafe.aiforecasting.application.AckOutboxEventHandler;
 import com.emsafe.aiforecasting.application.AssessmentQueryHandler;
 import com.emsafe.aiforecasting.application.CriticalWorkersQueryHandler;
+import com.emsafe.aiforecasting.application.ForecastingAccessPolicy;
+import com.emsafe.aiforecasting.application.ForecastingActorDirectory;
 import com.emsafe.aiforecasting.application.ForecastingEventFactory;
 import com.emsafe.aiforecasting.application.ModelVersionProvider;
 import com.emsafe.aiforecasting.application.OutboxQueryHandler;
@@ -161,6 +163,11 @@ public class AiForecastingConfiguration {
     @Bean
     OutboxQueryHandler outboxQueryHandler(ForecastingOutboxPort outbox) {
         return new OutboxQueryHandler(outbox);
+    }
+
+    @Bean
+    ForecastingAccessPolicy forecastingAccessPolicy(ForecastingActorDirectory directory) {
+        return new ForecastingAccessPolicy(directory);
     }
 
     @Bean

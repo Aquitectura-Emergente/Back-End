@@ -11,6 +11,11 @@ public enum CriticalityLevel {
         return compareTo(other) > 0;
     }
 
+    /** Inclusivo; {@code null} significa "sin filtro". */
+    public boolean isAtLeast(CriticalityLevel minimum) {
+        return minimum == null || compareTo(minimum) >= 0;
+    }
+
     /** Solo HIGH y CRITICAL generan recomendación y eventos de riesgo. */
     public boolean requiresRecommendation() {
         return this == HIGH || this == CRITICAL;

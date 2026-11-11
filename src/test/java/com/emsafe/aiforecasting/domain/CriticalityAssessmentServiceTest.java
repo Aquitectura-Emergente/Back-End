@@ -62,6 +62,14 @@ class CriticalityAssessmentServiceTest {
     }
 
     @Test
+    void isAtLeastIsInclusiveAndNullMeansNoFilter() {
+        assertThat(CriticalityLevel.HIGH.isAtLeast(CriticalityLevel.HIGH)).isTrue();
+        assertThat(CriticalityLevel.CRITICAL.isAtLeast(CriticalityLevel.HIGH)).isTrue();
+        assertThat(CriticalityLevel.MODERATE.isAtLeast(CriticalityLevel.HIGH)).isFalse();
+        assertThat(CriticalityLevel.LOW.isAtLeast(null)).isTrue();
+    }
+
+    @Test
     void levelsAreOrderedBySeverity() {
         assertThat(CriticalityLevel.CRITICAL.isMoreSevereThan(CriticalityLevel.HIGH)).isTrue();
         assertThat(CriticalityLevel.LOW.isMoreSevereThan(CriticalityLevel.MODERATE)).isFalse();

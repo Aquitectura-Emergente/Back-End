@@ -109,6 +109,16 @@ class QueryHandlersTest {
     }
 
     @Test
+    void criticalWorkersFilteredByMinCriticality() {
+        seedThreeWorkers();
+
+        assertThat(ctx.criticalWorkers.list(ORG, CriticalityLevel.HIGH, 0, 20).content())
+                .extracting(PreventiveAssessment::getWorkerId).containsExactly(300L, 101L);
+        assertThat(ctx.criticalWorkers.list(ORG, CriticalityLevel.CRITICAL, 0, 20).totalElements()).isEqualTo(1);
+        assertThat(ctx.criticalWorkers.list(ORG, null, 0, 20).totalElements()).isEqualTo(3);
+    }
+
+    @Test
     void criticalWorkersPaginatesAndValidates() {
         seedThreeWorkers();
 
