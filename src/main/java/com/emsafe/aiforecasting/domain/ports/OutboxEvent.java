@@ -1,6 +1,8 @@
 package com.emsafe.aiforecasting.domain.ports;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static com.emsafe.aiforecasting.domain.model.ForecastingRuleException.requirePresent;
@@ -29,7 +31,13 @@ public record OutboxEvent(String eventId,
         requirePresent(organizationId, "organizationId");
         requirePresent(occurredAt, "occurredAt");
         requirePresent(payload, "payload");
-        payload = Map.copyOf(payload);
+        // Conserva el orden y admite valores nulos (p. ej. projectedExceedanceAt sin excedencia).
+        payload = Collections.unmodifiableMap(new LinkedHashMap<>(payload));
+    }
+
+    public OutboxEvent markPublished(Instant at) {
+        return new OutboxEvent(eventId, eventType, schemaVersion, organizationId, aggregateId, occurredAt,
+                correlationId, causationId, payload, at);
     }
 
     public boolean isPending() {

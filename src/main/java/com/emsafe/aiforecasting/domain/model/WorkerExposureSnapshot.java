@@ -3,6 +3,7 @@ package com.emsafe.aiforecasting.domain.model;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
 
 import static com.emsafe.aiforecasting.domain.model.ForecastingRuleException.requirePresent;
 import static com.emsafe.aiforecasting.domain.model.ForecastingRuleException.requireText;
@@ -46,10 +47,53 @@ public record WorkerExposureSnapshot(Long organizationId,
         return plannedShiftEnd != null ? plannedShiftEnd : sessionStartedAt.plus(defaultShift);
     }
 
-    /** Copia con nueva zona, puesto y fin de turno (evento ShiftUpdated). */
+    /** La sesión pertenece a esta organización y operario; si no, es un conflicto (409). */
+    public void ensureBelongsTo(Long expectedOrganizationId, Long expectedWorkerId) {
+        if (!Objects.equals(organizationId, expectedOrganizationId) || !Objects.equals(workerId, expectedWorkerId)) {
+            throw ForecastingRuleException.conflict("session " + sessionId
+                    + " belongs to another worker or organization");
+        }
+    }
+
+    /**
+     * Integra un snapshot entrante de la misma sesión. Gana la captura más reciente:
+     * uno más antiguo se ignora. Zona, puesto y fin de turno omitidos se conservan.
+     */
+    public WorkerExposureSnapshot merge(WorkerExposureSnapshot incoming) {
+        requirePresent(incoming, "incoming");
+        if (!sessionId.equals(incoming.sessionId())) {
+            throw ForecastingRuleException.conflict("cannot merge snapshots of different sessions");
+        }
+        ensureBelongsTo(incoming.organizationId(), incoming.workerId());
+        if (incoming.capturedAt().isBefore(capturedAt)) {
+            return this;
+        }
+        return new WorkerExposureSnapshot(organizationId, workerId, sessionId,
+                incoming.zoneId() != null ? incoming.zoneId() : zoneId,
+                incoming.positionId() != null ? incoming.positionId() : positionId,
+                incoming.accumulatedIndex(), incoming.limitIndex(), incoming.sessionStartedAt(),
+                incoming.plannedShiftEnd() != null ? incoming.plannedShiftEnd() : plannedShiftEnd,
+                incoming.capturedAt(), incoming.updatedAt());
+    }
+
+    /** Nueva lectura del índice (p. ej. ExposureWarningRaised). Una captura más antigua se ignora. */
+    public WorkerExposureSnapshot withCapture(BigDecimal newIndex, BigDecimal newLimit,
+                                              Instant newCapturedAt, Instant now) {
+        requirePresent(newCapturedAt, "capturedAt");
+        if (newCapturedAt.isBefore(capturedAt)) {
+            return this;
+        }
+        return new WorkerExposureSnapshot(organizationId, workerId, sessionId, zoneId, positionId,
+                newIndex, newLimit, sessionStartedAt, plannedShiftEnd, newCapturedAt, now);
+    }
+
+    /** Cambio de zona, puesto o fin de turno (ShiftUpdated). Los valores nulos se conservan. */
     public WorkerExposureSnapshot withShift(String newZoneId, Long newPositionId,
                                             Instant newPlannedShiftEnd, Instant now) {
-        return new WorkerExposureSnapshot(organizationId, workerId, sessionId, newZoneId, newPositionId,
-                accumulatedIndex, limitIndex, sessionStartedAt, newPlannedShiftEnd, capturedAt, now);
+        return new WorkerExposureSnapshot(organizationId, workerId, sessionId,
+                newZoneId != null ? newZoneId : zoneId,
+                newPositionId != null ? newPositionId : positionId,
+                accumulatedIndex, limitIndex, sessionStartedAt,
+                newPlannedShiftEnd != null ? newPlannedShiftEnd : plannedShiftEnd, capturedAt, now);
     }
 }
