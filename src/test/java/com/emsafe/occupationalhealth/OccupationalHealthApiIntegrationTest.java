@@ -18,6 +18,8 @@ import com.emsafe.occupationalhealth.infrastructure.persistence.MitigationAction
 import com.emsafe.occupationalhealth.infrastructure.persistence.MitigationAuditEntryRepository;
 import com.emsafe.occupationalhealth.infrastructure.persistence.ProcessedMessageRepository;
 import com.emsafe.occupationalhealth.infrastructure.persistence.WorkerShiftRepository;
+import com.emsafe.plantconfiguration.domain.model.PlantZone;
+import com.emsafe.plantconfiguration.infrastructure.persistence.PlantZoneRepository;
 import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,6 +93,7 @@ class OccupationalHealthApiIntegrationTest {
     @Autowired ProcessedMessageRepository processedMessages;
     @Autowired ClosedSessionRecordRepository closedSessions;
     @Autowired ComplianceReportRepository reports;
+    @Autowired PlantZoneRepository plantZones;
 
     private Long workerId;
     private Long safeZoneId;
@@ -115,6 +118,12 @@ class OccupationalHealthApiIntegrationTest {
         auditLog.deleteAll();
         idempotencyRecords.deleteAll();
         processedMessages.deleteAll();
+        // Desde la V22 una zona es una entidad propia con sus sensores dentro, así
+        // que la topología también se rehace en cada test: si se acumulara,
+        // zoneStatistics vería las zonas de los métodos anteriores.
+        readings.deleteAll();
+        devices.deleteAll();
+        plantZones.deleteAll();
 
         workerId = userId(WORKER_EMAIL, Role.WORKER, ORG);
         userId(SSO_EMAIL, Role.SSO_RESPONSIBLE, ORG);
@@ -139,9 +148,20 @@ class OccupationalHealthApiIntegrationTest {
                 .getId();
     }
 
+    /**
+     * Crea una zona de verdad con un sensor dentro y una lectura fresca.
+     *
+     * <p>Antes de la V22 esto devolvía el id del dispositivo, porque una zona se
+     * identificaba con el sensor que la cubría. Ahora la zona es una entidad de
+     * `plantconfiguration` y el sensor apunta a ella, así que lo que se devuelve
+     * es el id de la <b>zona</b>. El nivel de la zona lo sigue decidiendo la
+     * lectura, que es lo único que hace determinista la clasificación.
+     */
     private Long zoneWithReading(String name, double microtesla, String level) {
+        PlantZone zone = plantZones.save(PlantZone.create(ORG, name, null));
         Device device = devices.save(Device.builder()
-                .name(name).type("Sensor").location(name).build());
+                .name(name).type("Sensor").location(name)
+                .plantZoneId(zone.getId()).build());
         readings.save(RadiationReading.builder()
                 .readingDate(LocalDate.now())
                 .recordedAt(LocalDateTime.now())
@@ -150,7 +170,7 @@ class OccupationalHealthApiIntegrationTest {
                 .sensorId("IT-" + device.getId())
                 .device(device)
                 .build());
-        return device.getId();
+        return zone.getId();
     }
 
     // ── Turnos ───────────────────────────────────────────────────────────────

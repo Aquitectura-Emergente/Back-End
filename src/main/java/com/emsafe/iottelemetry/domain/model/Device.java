@@ -56,6 +56,20 @@ public class Device {
     @JoinColumn(name = "client_id")
     private AppUser client;
 
+    /**
+     * Zona de planta que vigila este sensor (segmento industrial, V22).
+     *
+     * <p>Se guarda como id y no como relación JPA a propósito: `plantconfiguration`
+     * es el dueño de la zona, y navegar la entidad desde aquí ataría los dos
+     * contextos en ambos sentidos.
+     *
+     * <p>Nullable: los sensores del segmento hogar y los que entran por
+     * {@link #unregistered(String)} no tienen zona. Convive con {@code location},
+     * que sigue siendo el texto libre que muestran el front y el móvil.
+     */
+    @Column(name = "plant_zone_id")
+    private Long plantZoneId;
+
     // ─── Comportamiento del agregado ──────────────────────────────────────────
 
     /**
