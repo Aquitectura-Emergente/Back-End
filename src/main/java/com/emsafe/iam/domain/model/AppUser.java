@@ -71,6 +71,13 @@ public class AppUser {
     @Column(columnDefinition = "TEXT")
     private String notes;
 
+    /**
+     * Organización a la que pertenece una cuenta industrial (WORKER / SSO_RESPONSIBLE).
+     * Es el id de una cuenta CLIENT (la empresa). Null para ADMIN, TECHNICIAN y CLIENT.
+     */
+    @Column(name = "organization_id")
+    private Long organizationId;
+
     // ── Client (company / individual) profile fields ──────────────────────────
     @Column(name = "client_type", length = 20)
     private String clientType;
@@ -107,6 +114,11 @@ public class AppUser {
 
     public boolean hasRole(Role expected) {
         return role == expected;
+    }
+
+    /** Misma organización (ambas no nulas). Base de la regla "el SSO solo ve lo suyo". */
+    public boolean sameOrganizationAs(AppUser other) {
+        return organizationId != null && organizationId.equals(other.getOrganizationId());
     }
 
     /**

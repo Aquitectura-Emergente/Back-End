@@ -160,7 +160,31 @@ public class DataInitializer implements CommandLineRunner {
                         .build()
         );
         userRepository.saveAll(users);
+        seedIndustrialUsers();
         log.info("Seeded {} users", users.size());
+    }
+
+    /** Operarios y responsables de SSO de demo, ligados a Quantum Dynamics Lab / Harbor Medical Center. */
+    private void seedIndustrialUsers() {
+        AppUser quantum = userRepository.findByEmail("ops@quantumdyn.com").orElseThrow();
+        AppUser harbor  = userRepository.findByEmail("facilities@harbormed.com").orElseThrow();
+        userRepository.saveAll(List.of(
+                AppUser.builder().email("sso@quantumdyn.com")
+                        .passwordHash(passwordEncoder.encode("sso12345"))
+                        .name("Laura Quispe").initials("LQ")
+                        .role(Role.SSO_RESPONSIBLE).status("active").organizationId(quantum.getId())
+                        .joinDate(LocalDate.of(2026, 10, 1)).build(),
+                AppUser.builder().email("operario1@quantumdyn.com")
+                        .passwordHash(passwordEncoder.encode("worker123"))
+                        .name("Carlos Rojas").initials("CR")
+                        .role(Role.WORKER).status("active").organizationId(quantum.getId())
+                        .joinDate(LocalDate.of(2026, 10, 1)).build(),
+                AppUser.builder().email("operario2@harbormed.com")
+                        .passwordHash(passwordEncoder.encode("worker123"))
+                        .name("Ana Torres").initials("AT")
+                        .role(Role.WORKER).status("active").organizationId(harbor.getId())
+                        .joinDate(LocalDate.of(2026, 10, 1)).build()
+        ));
     }
 
     // ─── Devices — assigned to client users ──────────────────────────────────
@@ -310,103 +334,103 @@ public class DataInitializer implements CommandLineRunner {
         Device gpMn2 = deviceRepository.findBySerialNumber("GP-MN-002");
 
         List<RadiationReading> readings = List.of(
-            // ── Quantum Dynamics Lab — all at QD lat/lng, zone = room inside lab ──
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.09)
-                .latitude(QD_LAT).longitude(QD_LNG)
-                .location("Laboratorio de Física Nuclear — Piso 2")
-                .sensorId("#QD-001").device(qdSn1).build(),
+                // ── Quantum Dynamics Lab — all at QD lat/lng, zone = room inside lab ──
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.09)
+                        .latitude(QD_LAT).longitude(QD_LNG)
+                        .location("Laboratorio de Física Nuclear — Piso 2")
+                        .sensorId("#QD-001").device(qdSn1).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.07)
-                .latitude(QD_LAT).longitude(QD_LNG)
-                .location("Sala de Investigación A — Piso 1")
-                .sensorId("#QD-002").device(qdSn2).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.07)
+                        .latitude(QD_LAT).longitude(QD_LNG)
+                        .location("Sala de Investigación A — Piso 1")
+                        .sensorId("#QD-002").device(qdSn2).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.12)
-                .latitude(QD_LAT).longitude(QD_LNG)
-                .location("Sala de Servidores — Sótano")
-                .sensorId("#QD-003").device(qdMn1).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.12)
+                        .latitude(QD_LAT).longitude(QD_LNG)
+                        .location("Sala de Servidores — Sótano")
+                        .sensorId("#QD-003").device(qdMn1).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.11)
-                .latitude(QD_LAT).longitude(QD_LNG)
-                .location("Laboratorio Químico — Piso 3")
-                .sensorId("#QD-004").device(qdSn3).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.11)
+                        .latitude(QD_LAT).longitude(QD_LNG)
+                        .location("Laboratorio Químico — Piso 3")
+                        .sensorId("#QD-004").device(qdSn3).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.06)
-                .latitude(QD_LAT).longitude(QD_LNG)
-                .location("Pasillo Principal — Piso 1")
-                .sensorId("#QD-005").device(qdSn4).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.06)
+                        .latitude(QD_LAT).longitude(QD_LNG)
+                        .location("Pasillo Principal — Piso 1")
+                        .sensorId("#QD-005").device(qdSn4).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.08)
-                .latitude(QD_LAT).longitude(QD_LNG)
-                .location("Aula de Prácticas — Piso 2")
-                .sensorId("#QD-006").device(qdMn2).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.08)
+                        .latitude(QD_LAT).longitude(QD_LNG)
+                        .location("Aula de Prácticas — Piso 2")
+                        .sensorId("#QD-006").device(qdMn2).build(),
 
-            // ── Harbor Medical Center — all at HM lat/lng, zone = room inside clinic ──
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.28)
-                .latitude(HM_LAT).longitude(HM_LNG)
-                .location("Sala de Rayos X — Piso 1")
-                .sensorId("#HM-001").device(hmSn1).build(),
+                // ── Harbor Medical Center — all at HM lat/lng, zone = room inside clinic ──
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.28)
+                        .latitude(HM_LAT).longitude(HM_LNG)
+                        .location("Sala de Rayos X — Piso 1")
+                        .sensorId("#HM-001").device(hmSn1).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.35)
-                .latitude(HM_LAT).longitude(HM_LNG)
-                .location("Suite de Resonancia Magnética — Piso 2")
-                .sensorId("#HM-002").device(hmSn2).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.35)
+                        .latitude(HM_LAT).longitude(HM_LNG)
+                        .location("Suite de Resonancia Magnética — Piso 2")
+                        .sensorId("#HM-002").device(hmSn2).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.41)
-                .latitude(HM_LAT).longitude(HM_LNG)
-                .location("Unidad de Radioterapia — Piso 3")
-                .sensorId("#HM-003").device(hmMn1).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.41)
+                        .latitude(HM_LAT).longitude(HM_LNG)
+                        .location("Unidad de Radioterapia — Piso 3")
+                        .sensorId("#HM-003").device(hmMn1).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.09)
-                .latitude(HM_LAT).longitude(HM_LNG)
-                .location("Sala de Urgencias — Piso 1")
-                .sensorId("#HM-004").device(hmSn3).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.09)
+                        .latitude(HM_LAT).longitude(HM_LNG)
+                        .location("Sala de Urgencias — Piso 1")
+                        .sensorId("#HM-004").device(hmSn3).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.22)
-                .latitude(HM_LAT).longitude(HM_LNG)
-                .location("Pasillo de Oncología — Piso 3")
-                .sensorId("#HM-005").device(hmSn4).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.22)
+                        .latitude(HM_LAT).longitude(HM_LNG)
+                        .location("Pasillo de Oncología — Piso 3")
+                        .sensorId("#HM-005").device(hmSn4).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.07)
-                .latitude(HM_LAT).longitude(HM_LNG)
-                .location("Sala de Espera — Planta Baja")
-                .sensorId("#HM-006").device(hmSn5).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.07)
+                        .latitude(HM_LAT).longitude(HM_LNG)
+                        .location("Sala de Espera — Planta Baja")
+                        .sensorId("#HM-006").device(hmSn5).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.33)
-                .latitude(HM_LAT).longitude(HM_LNG)
-                .location("Radiología Intervencionista — Piso 2")
-                .sensorId("#HM-007").device(hmMn2).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.33)
+                        .latitude(HM_LAT).longitude(HM_LNG)
+                        .location("Radiología Intervencionista — Piso 2")
+                        .sensorId("#HM-007").device(hmMn2).build(),
 
-            // ── Global Pharma Corp — all at GP lat/lng, zone = area inside plant ──
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.18)
-                .latitude(GP_LAT).longitude(GP_LNG)
-                .location("Sala de Producción A — Nave Principal")
-                .sensorId("#GP-001").device(gpSn1).build(),
+                // ── Global Pharma Corp — all at GP lat/lng, zone = area inside plant ──
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.18)
+                        .latitude(GP_LAT).longitude(GP_LNG)
+                        .location("Sala de Producción A — Nave Principal")
+                        .sensorId("#GP-001").device(gpSn1).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.22)
-                .latitude(GP_LAT).longitude(GP_LNG)
-                .location("Laboratorio de Control de Calidad — Piso 1")
-                .sensorId("#GP-002").device(gpSn2).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.22)
+                        .latitude(GP_LAT).longitude(GP_LNG)
+                        .location("Laboratorio de Control de Calidad — Piso 1")
+                        .sensorId("#GP-002").device(gpSn2).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.15)
-                .latitude(GP_LAT).longitude(GP_LNG)
-                .location("Almacén de Materias Primas — Planta Baja")
-                .sensorId("#GP-003").device(gpMn1).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.15)
+                        .latitude(GP_LAT).longitude(GP_LNG)
+                        .location("Almacén de Materias Primas — Planta Baja")
+                        .sensorId("#GP-003").device(gpMn1).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.45)
-                .latitude(GP_LAT).longitude(GP_LNG)
-                .location("Laboratorio Farmacéutico — Piso 2")
-                .sensorId("#GP-004").device(gpSn3).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.45)
+                        .latitude(GP_LAT).longitude(GP_LNG)
+                        .location("Laboratorio Farmacéutico — Piso 2")
+                        .sensorId("#GP-004").device(gpSn3).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.09)
-                .latitude(GP_LAT).longitude(GP_LNG)
-                .location("Área de Carga y Despacho — Planta Baja")
-                .sensorId("#GP-005").device(gpSn4).build(),
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.09)
+                        .latitude(GP_LAT).longitude(GP_LNG)
+                        .location("Área de Carga y Despacho — Planta Baja")
+                        .sensorId("#GP-005").device(gpSn4).build(),
 
-            RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.38)
-                .latitude(GP_LAT).longitude(GP_LNG)
-                .location("Sala de Esterilización — Piso 2")
-                .sensorId("#GP-006").device(gpMn2).build()
+                RadiationReading.builder().readingDate(LocalDate.of(2026, 5, 20)).value(0.38)
+                        .latitude(GP_LAT).longitude(GP_LNG)
+                        .location("Sala de Esterilización — Piso 2")
+                        .sensorId("#GP-006").device(gpMn2).build()
         );
 
         // Rescale legacy seed values (0.06–0.45) to microtesla with the linear map
@@ -1282,12 +1306,12 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private WorkOrder buildDetailedWo(String orderId, WorkOrderType type, WorkOrderStatus status,
-                                       String client, String location, LocalDate date, String time,
-                                       AppUser technician, String priority,
-                                       String contactName, String contactRole,
-                                       String contactPhone, String contactEmail,
-                                       String accessInstructions, int expectedSensors,
-                                       String assetId, String notes, List<String> tools) {
+                                      String client, String location, LocalDate date, String time,
+                                      AppUser technician, String priority,
+                                      String contactName, String contactRole,
+                                      String contactPhone, String contactEmail,
+                                      String accessInstructions, int expectedSensors,
+                                      String assetId, String notes, List<String> tools) {
         WorkOrder wo = WorkOrder.builder()
                 .orderId(orderId).type(type).status(status)
                 .client(client).location(location)
@@ -1307,12 +1331,12 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private void buildAndSaveWo(String orderId, WorkOrderType type, WorkOrderStatus status,
-                                 String client, String location, LocalDate date, String time,
-                                 AppUser technician, String priority,
-                                 String contactName, String contactRole,
-                                 String contactPhone, String contactEmail,
-                                 String accessInstructions, int expectedSensors,
-                                 String assetId, String notes, List<String> tools) {
+                                String client, String location, LocalDate date, String time,
+                                AppUser technician, String priority,
+                                String contactName, String contactRole,
+                                String contactPhone, String contactEmail,
+                                String accessInstructions, int expectedSensors,
+                                String assetId, String notes, List<String> tools) {
         workOrderRepository.save(buildDetailedWo(orderId, type, status, client, location,
                 date, time, technician, priority, contactName, contactRole,
                 contactPhone, contactEmail, accessInstructions, expectedSensors,
@@ -1330,8 +1354,8 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private History hist(String orderId, LocalDate date, String time,
-                          String client, String site, String serviceType,
-                          String technician, String initials, String status, Long technicianId) {
+                         String client, String site, String serviceType,
+                         String technician, String initials, String status, Long technicianId) {
         return History.builder()
                 .orderId(orderId).completionDate(date).completionTime(time)
                 .client(client).site(site).serviceType(serviceType)
