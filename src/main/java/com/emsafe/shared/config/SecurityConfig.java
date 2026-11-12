@@ -57,6 +57,8 @@ public class SecurityConfig {
                                 "/swagger-ui.html",
                                 "/v3/api-docs/**"
                         ).permitAll()
+                        // AI Forecasting: requiere JWT (debe ir antes del permitAll de /api/v1/**)
+                        .requestMatchers("/api/v1/ai-forecasting/**").authenticated()
                         // IoT telemetry (edge ingestion + web/mobile consumption).
                         // Público por ahora: el edge no tiene JWT. Endurecer luego
                         // (API key en el POST, JWT en el GET) si se requiere.
