@@ -29,4 +29,10 @@ public interface DeviceRepository extends JpaRepository<Device, Long> {
     // ─── Discovery (installation claim) ──────────────────────────────────────
     /** Devices not yet assigned to a client (auto-created by the edge ingest). */
     List<Device> findByStatusOrderByIdAsc(String status);
+
+    // ─── Plant zones (segmento industrial, V22) ──────────────────────────────
+    /** Sensores que vigilan una zona de planta. Los consulta `plantconfiguration`. */
+    List<Device> findByPlantZoneIdOrderByIdAsc(Long plantZoneId);
+
+    long countByPlantZoneId(Long plantZoneId);
 }

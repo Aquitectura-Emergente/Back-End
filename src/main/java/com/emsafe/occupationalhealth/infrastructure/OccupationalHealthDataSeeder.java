@@ -10,6 +10,12 @@ import com.emsafe.occupationalhealth.domain.model.*;
 import com.emsafe.occupationalhealth.infrastructure.persistence.AlertEvidenceRecordRepository;
 import com.emsafe.occupationalhealth.infrastructure.persistence.ClosedSessionRecordRepository;
 import com.emsafe.occupationalhealth.infrastructure.persistence.WorkerShiftRepository;
+import com.emsafe.plantconfiguration.domain.model.JobPosition;
+import com.emsafe.plantconfiguration.domain.model.PlantEdge;
+import com.emsafe.plantconfiguration.domain.model.PlantZone;
+import com.emsafe.plantconfiguration.infrastructure.persistence.JobPositionRepository;
+import com.emsafe.plantconfiguration.infrastructure.persistence.PlantEdgeRepository;
+import com.emsafe.plantconfiguration.infrastructure.persistence.PlantZoneRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -70,6 +76,9 @@ public class OccupationalHealthDataSeeder implements CommandLineRunner {
     private final WorkerShiftRepository shifts;
     private final ClosedSessionRecordRepository closedSessions;
     private final AlertEvidenceRecordRepository alertEvidence;
+    private final PlantZoneRepository plantZones;
+    private final PlantEdgeRepository plantEdges;
+    private final JobPositionRepository jobPositions;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -82,12 +91,12 @@ public class OccupationalHealthDataSeeder implements CommandLineRunner {
         AppUser w2 = ensureUser("operario2@emsafe.com", "Rosa Mamani", "RM", Role.WORKER, "worker123");
         AppUser w3 = ensureUser("operario3@emsafe.com", "Julio Ccahua", "JC", Role.WORKER, "worker123");
 
-        List<Long> zones = demoZones();
+        List<PlantZone> zones = ensurePlantTopology();
         if (zones.size() < 2) {
-            log.warn("Not enough devices to use as plant zones; skipping shifts");
+            log.warn("Could not create at least two plant zones; skipping shifts");
         } else {
-            ensureOpenShift(w2, 2001L, zones.get(0));
-            ensureOpenShift(w3, 2002L, zones.get(1));
+            ensureOpenShift(w2, firstPositionOf(zones.get(0)), zones.get(0).getId());
+            ensureOpenShift(w3, firstPositionOf(zones.get(1)), zones.get(1).getId());
         }
 
         ensureClosedSession("seed-sess-1", w1, "480", "COMPLETE", 4);
@@ -99,7 +108,8 @@ public class OccupationalHealthDataSeeder implements CommandLineRunner {
         ensureAlertEvidence("seed-alert-esc", w2, "seed-sess-4", "DANGER", false, true);
 
         log.info("Occupational Health demo data ready. SSO={} workers={},{},{} zones={}",
-                sso.getId(), w1.getId(), w2.getId(), w3.getId(), zones);
+                sso.getId(), w1.getId(), w2.getId(), w3.getId(),
+                zones.stream().map(PlantZone::getName).toList());
     }
 
     // ─── Piezas ───────────────────────────────────────────────────────────────
@@ -134,18 +144,81 @@ public class OccupationalHealthDataSeeder implements CommandLineRunner {
     }
 
     /**
-     * Zonas de planta de la demo.
+     * Topología de la planta de demostración (V22 en adelante).
      *
-     * Una zona se identifica con el sensor que la cubre (ver RadiationZoneAdapter),
-     * así que se toman los primeros dispositivos existentes. Se ordenan por id
-     * para que dos ejecuciones den las mismas zonas.
+     * <p>Antes este método devolvía ids de dispositivo, porque una zona se
+     * identificaba con el sensor que la cubría. Ahora las zonas existen de
+     * verdad, así que siembra la topología completa del segmento industrial:
+     *
+     * <pre>
+     *   Zona ── 1 edge
+     *         ├── 2 sensores
+     *         └── 2 puestos de trabajo
+     * </pre>
+     *
+     * <p>Reasigna los primeros dispositivos a estas zonas <b>a propósito</b>: la
+     * V22 hizo backfill de una zona por cada {@code location} distinta, y como
+     * ningún par de sensores compartía texto salió una zona por sensor. Eso no
+     * ejercita la topología real, así que la demo agrupa dos sensores por zona
+     * para que se pueda ver funcionando. Las zonas del backfill siguen ahí para
+     * el resto de los dispositivos.
+     *
+     * <p>Idempotente: si la zona ya existe por nombre, se reutiliza.
      */
-    private List<Long> demoZones() {
-        return devices.findAll().stream()
-                .map(Device::getId)
-                .sorted()
-                .limit(3)
+    private List<PlantZone> ensurePlantTopology() {
+        List<String> zoneNames = List.of(
+                "Nave de Hornos", "Linea de Soldadura", "Sala de Control");
+        List<Device> available = devices.findAll().stream()
+                .sorted(java.util.Comparator.comparing(Device::getId))
                 .toList();
+
+        List<PlantZone> result = new java.util.ArrayList<>();
+        int deviceCursor = 0;
+
+        for (int i = 0; i < zoneNames.size(); i++) {
+            String zoneName = zoneNames.get(i);
+            PlantZone zone = plantZones
+                    .findByOrganizationIdOrderByNameAsc(ORG).stream()
+                    .filter(z -> zoneName.equals(z.getName()))
+                    .findFirst()
+                    .orElseGet(() -> plantZones.save(PlantZone.create(
+                            ORG, zoneName, "Zona de demostracion del segmento industrial")));
+            result.add(zone);
+
+            if (!plantEdges.existsByPlantZoneId(zone.getId())) {
+                plantEdges.save(PlantEdge.declare(
+                        zone.getId(), "EMSAFE-EDGE-Z" + (i + 1)));
+                log.info("Declared edge for zone {}", zone.getName());
+            }
+
+            ensureJobPosition(zone, "Operacion " + zoneName);
+            ensureJobPosition(zone, "Supervision " + zoneName);
+
+            // Dos sensores por zona, para que la zona agrupe de verdad.
+            for (int d = 0; d < 2 && deviceCursor < available.size(); d++, deviceCursor++) {
+                Device device = available.get(deviceCursor);
+                if (!zone.getId().equals(device.getPlantZoneId())) {
+                    device.setPlantZoneId(zone.getId());
+                    devices.save(device);
+                }
+            }
+        }
+        return result;
+    }
+
+    private void ensureJobPosition(PlantZone zone, String name) {
+        if (!jobPositions.existsByPlantZoneIdAndName(zone.getId(), name)) {
+            jobPositions.save(JobPosition.create(zone.getId(), name, null));
+        }
+    }
+
+    /** Primer puesto de la zona, que es el que ocupa el operario de la demo. */
+    private Long firstPositionOf(PlantZone zone) {
+        return jobPositions.findByPlantZoneIdOrderByNameAsc(zone.getId()).stream()
+                .map(JobPosition::getId)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "Zone " + zone.getName() + " has no job position"));
     }
 
     private void ensureOpenShift(AppUser worker, Long jobPositionId, Long zoneId) {

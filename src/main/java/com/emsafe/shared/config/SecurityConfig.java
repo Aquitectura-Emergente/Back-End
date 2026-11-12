@@ -81,6 +81,12 @@ public class SecurityConfig {
                         // lo hace MitigationAccessPolicy; aquí solo se cierra la puerta.
                         .requestMatchers("/api/v1/occupational-health/**")
                                 .hasAnyRole("SSO_RESPONSIBLE", "WORKER", "ADMIN")
+                        // Plant Configuration: el catálogo de zonas, edges y puestos.
+                        // También ANTES del permitAll de /api/v1/**, por el mismo
+                        // motivo. El filtrado por organización lo hace
+                        // PlantConfigurationAccessPolicy; aquí solo se cierra la puerta.
+                        .requestMatchers("/api/v1/plant-config/**")
+                                .hasAnyRole("SSO_RESPONSIBLE", "WORKER", "ADMIN")
                         .requestMatchers("/api/v1/**").permitAll()
                         // WebSocket handshake (STOMP) — real-time telemetry push (no JWT, like /api/v1).
                         .requestMatchers("/ws/**").permitAll()
