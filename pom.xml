@@ -96,6 +96,14 @@
             <artifactId>flyway-mysql</artifactId>
         </dependency>
 
+        <!-- PDF — exportación del reporte de cumplimiento (informe §5.6.4, RF31).
+             OpenPDF es la librería que especifica el informe. -->
+        <dependency>
+            <groupId>com.github.librepdf</groupId>
+            <artifactId>openpdf</artifactId>
+            <version>1.3.40</version>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>

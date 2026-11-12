@@ -122,6 +122,15 @@ public class AppUser {
     }
 
     /**
+     * Pertenece a la organización indicada. Una cuenta sin organización (todo el
+     * segmento hogar) no pertenece a ninguna, así que nunca ve datos industriales
+     * por descuido.
+     */
+    public boolean belongsTo(Long organization) {
+        return organizationId != null && organizationId.equals(organization);
+    }
+
+    /**
      * Solo las cuentas activas pueden iniciar sesión. El motivo del rechazo se
      * distingue a propósito: "pendiente de aprobación" y "desactivada" son
      * situaciones distintas para el usuario, y ninguna de las dos debe

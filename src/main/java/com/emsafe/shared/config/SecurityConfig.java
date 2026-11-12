@@ -73,6 +73,14 @@ public class SecurityConfig {
                         // Público por ahora: el edge no tiene JWT. Endurecer luego
                         // (API key en el POST, JWT en el GET) si se requiere.
                         .requestMatchers("/api/v1/personal-dosimetry/**").authenticated()
+                        // Occupational Health & Mitigation (segmento industrial).
+                        // DEBE declararse ANTES del permitAll de /api/v1/**: comparte
+                        // ese prefijo y, sin esta regla, aprobar una medida de
+                        // mitigación quedaría abierto a cualquiera sin autenticar.
+                        // El filtrado fino (el SSO decide, el operario solo ve lo suyo)
+                        // lo hace MitigationAccessPolicy; aquí solo se cierra la puerta.
+                        .requestMatchers("/api/v1/occupational-health/**")
+                                .hasAnyRole("SSO_RESPONSIBLE", "WORKER", "ADMIN")
                         .requestMatchers("/api/v1/**").permitAll()
                         // WebSocket handshake (STOMP) — real-time telemetry push (no JWT, like /api/v1).
                         .requestMatchers("/ws/**").permitAll()
