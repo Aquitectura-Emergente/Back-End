@@ -369,7 +369,10 @@ abstract class PersonalDosimetryApiContract {
     void auditIsAdministrativeAndSuccessfulOrOtherContextRequestsAreNotRecorded() throws Exception {
         openSession();
         mvc.perform(get(BASE + "/workers/me/exposure").with(user(WORKER))).andExpect(status().isOk());
-        mvc.perform(get("/api/tech/work-orders")).andExpect(status().isUnauthorized());
+        // 403, no 401: el 401 está acotado a /api/v1/personal-dosimetry/** y el resto de la API
+        // sigue con el Http403ForbiddenEntryPoint de siempre. Lo que verifica este test es la
+        // línea siguiente — que una petición de otro contexto no se audita aquí.
+        mvc.perform(get("/api/tech/work-orders")).andExpect(status().isForbidden());
         assertThat(audits.count()).isZero();
         mvc.perform(get(BASE + "/audit").with(user(SSO))).andExpect(status().isForbidden());
         mvc.perform(get(BASE + "/audit").with(user(ADMIN)))
