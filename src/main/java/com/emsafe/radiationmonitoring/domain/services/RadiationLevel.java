@@ -5,10 +5,10 @@ import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 /**
  * Smart-edge classification helper — single source of truth for radiation levels.
  *
- * The EDGE is the layer that classifies every reading (SAFE/CAUTION/DANGER in µT,
- * thresholds 100/200, ICNIRP 50 Hz reference). The backend must TRUST that level
- * and never re-classify; the fallback by value here exists only for readings that
- * never went through the edge (seed/legacy data stored with level = NULL).
+ * Levels are SAFE/CAUTION/DANGER in µT (thresholds 100/200, ICNIRP 50 Hz
+ * reference). Readings that arrive over MQTT no longer carry the level, so home
+ * readings are classified with {@link #byValue(double)} when they are recorded
+ * (a saturated reading is always DANGER). A stored level is trusted as is.
  */
 public final class RadiationLevel {
 

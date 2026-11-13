@@ -30,13 +30,13 @@ public final class DosimetryResources {
                           BigDecimal accumulatedIndex, BigDecimal limitIndex, BigDecimal percentage,
                           boolean warningRaised, boolean limitExceeded, BigDecimal coveragePercentage,
                           boolean coverageComplete, Instant startedAt, Instant endedAt,
-                          Instant reconciliationDeadline, Instant finalizedAt) {
+                          Instant reconciliationDeadline, Instant finalizedAt, int outOfRangeReadings) {
         public static Session from(ExposureSession s, Instant now) {
             return new Session(s.getId(), s.getOrganizationId(), s.getWorkerId(), s.getDeviceId(),
                     s.getJobPositionId(), s.getLimitVersionId(), s.getState(), ExposureIndex.METHOD, ExposureIndex.UNIT,
                     s.getAccumulatedIndex(), s.getLimitIndex(), s.percentage(), s.isWarningRaised(),
                     s.isLimitExceeded(), s.coverage(now), s.coverageComplete(), s.getStartedAt(), s.getEndedAt(),
-                    s.getReconciliationDeadline(), s.getFinalizedAt());
+                    s.getReconciliationDeadline(), s.getFinalizedAt(), s.getOutOfRangeReadings());
         }
     }
 

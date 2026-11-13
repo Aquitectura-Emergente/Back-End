@@ -122,6 +122,22 @@ public class PlantEdgeService {
                 zoneName,
                 edge.getSerialNumber(),
                 edge.getStatus(),
-                edge.getCreatedAt());
+                edge.getCreatedAt(),
+                edge.getConnectivity(),
+                edge.getConnectivityChangedAt());
+    }
+
+    /**
+     * Conectividad que informa el Edge por MQTT (vÃ­a Device Management). Un
+     * serial no declarado se ignora: el Edge puede existir antes de declararse.
+     */
+    @Transactional
+    public boolean recordConnectivity(String serialNumber, boolean online, java.time.Instant at) {
+        if (serialNumber == null) return false;
+        return edges.findBySerialNumber(serialNumber.trim()).map(edge -> {
+            boolean changed = edge.recordConnectivity(online, at);
+            edges.save(edge);
+            return changed;
+        }).orElse(false);
     }
 }

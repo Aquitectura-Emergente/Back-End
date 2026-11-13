@@ -24,7 +24,14 @@ public final class DosimetryRequests {
                                 @NotNull @PositiveOrZero Long sequence,
                                 @NotNull @DecimalMin("0") BigDecimal fieldMicrotesla,
                                 @NotBlank @Pattern(regexp = "uT") String unit,
-                                @NotNull Instant capturedFrom, @NotNull Instant capturedTo) {}
+                                @NotNull Instant capturedFrom, @NotNull Instant capturedTo,
+                                Boolean saturated) {
+        /** {@code saturated}: el sensor llegÃ³ a su tope y el valor es un mÃ­nimo. Opcional. */
+        public IngestReading(Long deviceId, String bootId, Long sequence, BigDecimal fieldMicrotesla, String unit,
+                             Instant capturedFrom, Instant capturedTo) {
+            this(deviceId, bootId, sequence, fieldMicrotesla, unit, capturedFrom, capturedTo, null);
+        }
+    }
     public record CloseSession(Instant endedAt) {}
     public record FinalizeSession(boolean deliveryConfirmed) {}
 }

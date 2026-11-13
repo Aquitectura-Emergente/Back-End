@@ -8,6 +8,8 @@ public record PlantEdgeDto(
         String plantZoneName,
         String serialNumber,
         String status,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        String connectivity,
+        java.time.Instant connectivityChangedAt
 ) {
 }
