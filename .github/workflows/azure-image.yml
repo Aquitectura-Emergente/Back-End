@@ -45,8 +45,13 @@ jobs:
 
       # El Dockerfile compila con -DskipTests, asi que si no se corren aqui no
       # se corren en ninguna parte y la imagen se publicaria sin verificar.
+      #
+      # `mvn` y no `./mvnw`: el wrapper esta en el indice como 100644, sin bit de
+      # ejecucion (el repo se creo en Windows), asi que `./mvnw` falla con
+      # "Permission denied" y codigo 126. Es la misma razon por la que ci.yml usa
+      # `mvn`. El arreglo de fondo seria `git update-index --chmod=+x mvnw`.
       - name: Tests
-        run: ./mvnw -B clean test
+        run: mvn -B clean test
 
       - name: Login en ACR
         uses: docker/login-action@v3
