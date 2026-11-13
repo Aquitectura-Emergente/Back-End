@@ -181,11 +181,23 @@ public class PersonalDosimetryService {
         if (session.getState() == ExposureSession.State.CLOSED) return view(session);
         session.finalizeSession(now(), request != null && request.deliveryConfirmed());
         sessions.saveAndFlush(session);
+        // Map.ofEntries y no Map.of: son once pares y Map.of admite diez.
+        // unit, limitIndex, methodId y finalizedAt se añadieron el 2026-11-12
+        // porque el inbox de Occupational Health los exige para dejar constancia
+        // en un reporte de cumplimiento, y sin ellos ese hecho no se podía
+        // entregar. Son los mismos nombres que ya usa OccupationalLimitExceeded.
         emit(session.getOrganizationId(), "ExposureSessionClosed",
-                Map.of("sessionId", id, "workerId", session.getWorkerId(),
-                        "accumulatedIndex", session.getAccumulatedIndex(), "limitVersionId", session.getLimitVersionId(),
-                        "coveragePercentage", session.coverage(now()), "coverageComplete", session.coverageComplete(),
-                        "finalizedBy", actor.userId()), now());
+                Map.ofEntries(Map.entry("sessionId", id),
+                        Map.entry("workerId", session.getWorkerId()),
+                        Map.entry("accumulatedIndex", session.getAccumulatedIndex()),
+                        Map.entry("limitIndex", session.getLimitIndex()),
+                        Map.entry("limitVersionId", session.getLimitVersionId()),
+                        Map.entry("coveragePercentage", session.coverage(now())),
+                        Map.entry("coverageComplete", session.coverageComplete()),
+                        Map.entry("finalizedBy", actor.userId()),
+                        Map.entry("finalizedAt", now()),
+                        Map.entry("methodId", ExposureIndex.METHOD),
+                        Map.entry("unit", ExposureIndex.UNIT)), now());
         return view(session);
     }
 
