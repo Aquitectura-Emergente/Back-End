@@ -4,7 +4,7 @@ import com.emsafe.personaldosimetry.domain.model.MembershipRole;
 import org.springframework.security.access.AccessDeniedException;
 
 public record DosimetryActor(Long userId, boolean administrator, Long organizationId, MembershipRole role) {
-    /** La ingesta automÃ¡tica de Device Management: sin usuario y con alcance de administrador. */
+    /** La ingesta automática de Device Management: sin usuario y con alcance de administrador. */
     public static DosimetryActor system() {
         return new DosimetryActor(null, true, null, null);
     }

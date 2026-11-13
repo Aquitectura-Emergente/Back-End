@@ -1,7 +1,11 @@
 package com.emsafe.devicemanagement.application;
 
 import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.domain.model.DeviceType;
+import com.emsafe.devicemanagement.domain.model.PlugCommandStatus;
+import com.emsafe.devicemanagement.domain.model.PlugPower;
 import com.emsafe.devicemanagement.domain.repositories.DeviceRepository;
+import com.emsafe.devicemanagement.domain.repositories.PlugCommandRepository;
 import com.emsafe.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,6 +24,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class DeviceCatalog {
     private final DeviceRepository devices;
+    private final PlugCommandRepository commands;
     private final Clock clock;
 
     @Transactional(readOnly = true)
@@ -66,13 +71,21 @@ public class DeviceCatalog {
         devices.save(device);
     }
 
-    /** Orden del usuario en el modelo antiguo (estado deseado del relé). */
-    @Transactional
-    public Device requestDesiredPlug(Long deviceId, Long clientId, String plug) {
-        Device device = devices.findByIdAndClient(deviceId, clientId)
-                .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
-        device.requestPlug(plug);
-        return devices.save(device);
+    /** Orden pendiente del usuario o, si no hay, el estado real del enchufe. Null si no es un enchufe. */
+    @Transactional(readOnly = true)
+    public String desiredPlugOf(Device device) {
+        if (device.getDeviceType() != DeviceType.SMART_PLUG) return null;
+        return commands.findLatestForPlug(device.getSerialNumber())
+                .filter(c -> c.getStatus() == PlugCommandStatus.PENDING)
+                .map(c -> c.getAction().name())
+                .orElseGet(() -> device.getPlugPower() == null || device.getPlugPower() == PlugPower.UNKNOWN
+                        ? null : device.getPlugPower().name());
+    }
+
+    /** Estado real del relé de un enchufe; para otros dispositivos, {@code fallback}. */
+    public String plugStateOf(Device device, String fallback) {
+        return device.getDeviceType() == DeviceType.SMART_PLUG && device.getPlugPower() != null
+                ? device.getPlugPower().name() : fallback;
     }
 
     /** Dispositivos ya construidos (datos semilla). */

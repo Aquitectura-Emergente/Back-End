@@ -5,6 +5,7 @@ import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
 import com.emsafe.devicemanagement.domain.model.Device;
 import com.emsafe.devicemanagement.application.DeviceCatalog;
+import com.emsafe.devicemanagement.application.PlugCommandService;
 import com.emsafe.radiationmonitoring.domain.services.RadiationLevel;
 import com.emsafe.shared.exception.BadRequestException;
 import com.emsafe.shared.exception.ResourceNotFoundException;
@@ -38,6 +39,7 @@ public class ClientService {
 
     private final UserRepository userRepository;
     private final DeviceCatalog deviceCatalog;
+    private final PlugCommandService plugCommands;
     private final RadiationReadingRepository radiationReadingRepository;
     private final PasswordEncoder passwordEncoder;
 
@@ -115,13 +117,15 @@ public class ClientService {
     }
 
     /**
-     * Stores the relay state the user wants (ON | OFF) for one of THEIR devices.
-     * The edge polls GET /api/v1/devices/{serial}/plug to pick up the order and
-     * drive the physical relay (mobile → backend → edge → device).
+     * Order from the user (ON | OFF) for one of THEIR smart plugs. Device
+     * Management publishes it to the home edge over MQTT; the real state comes
+     * back on iot/{plugId}/state. Until then desiredPlug shows the pending order.
      */
     @Transactional
     public ClientDeviceDto setDesiredPlug(Long clientId, Long deviceId, String plug) {
-        Device d = deviceCatalog.requestDesiredPlug(deviceId, clientId, plug);
+        plugCommands.requestForClient(clientId, deviceId, plug);
+        Device d = deviceCatalog.findForClient(deviceId, clientId)
+                .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
         return toDeviceDto(d, radiationReadingRepository.findByDeviceIdWithDevice(deviceId));
     }
 
@@ -294,8 +298,8 @@ public class ClientService {
                 latest != null ? latest.level() : null,
                 latest != null && latest.getReadingDate() != null ? latest.getReadingDate().toString() : null,
                 deviceReadings.size(),
-                latest != null ? latest.getPlug() : null,
-                d.getDesiredPlug()
+                deviceCatalog.plugStateOf(d, latest != null ? latest.getPlug() : null),
+                deviceCatalog.desiredPlugOf(d)
         );
     }
 

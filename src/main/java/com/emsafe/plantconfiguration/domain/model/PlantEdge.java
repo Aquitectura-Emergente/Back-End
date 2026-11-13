@@ -61,7 +61,7 @@ public class PlantEdge {
 
     /**
      * Conectividad informada por el propio Edge (ONLINE / OFFLINE). Es aparte de
-     * {@code status}, que es la activaciÃ³n administrativa que decide el SSO.
+     * {@code status}, que es la activación administrativa que decide el SSO.
      */
     @Column(length = 10)
     private String connectivity;
@@ -93,7 +93,7 @@ public class PlantEdge {
         this.status = EdgeStatus.INACTIVE;
     }
 
-    /** Se ignora un estado mÃ¡s viejo que el vigente. */
+    /** Se ignora un estado más viejo que el vigente. */
     public boolean recordConnectivity(boolean online, Instant at) {
         if (at == null || (connectivityChangedAt != null && at.isBefore(connectivityChangedAt))) return false;
         String next = online ? "ONLINE" : "OFFLINE";

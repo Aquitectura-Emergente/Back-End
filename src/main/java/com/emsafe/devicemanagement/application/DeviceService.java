@@ -10,12 +10,12 @@ import com.emsafe.devicemanagement.interfaces.rest.dto.CreateDeviceRequest;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceDto;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DiscoverableDeviceDto;
 import com.emsafe.iam.domain.model.AppUser;
-import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
-import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
+import com.emsafe.radiationmonitoring.application.RadiationReadingService;
+import com.emsafe.radiationmonitoring.application.RadiationReadingService.RadiationReadingView;
 import com.emsafe.shared.exception.BadRequestException;
 import com.emsafe.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -32,7 +32,7 @@ public class DeviceService {
 
     private final DeviceRepository deviceRepository;
     private final AccountDirectory accounts;
-    private final RadiationReadingRepository readingRepository;
+    private final RadiationReadingService readings;
     private final Clock clock;
 
     @Transactional(readOnly = true)
@@ -47,18 +47,17 @@ public class DeviceService {
     @Transactional(readOnly = true)
     public List<DiscoverableDeviceDto> getDiscoverable() {
         return deviceRepository.findByStatus(DeviceStatus.UNREGISTERED).stream().map(d -> {
-            RadiationReading last = readingRepository
-                    .findBySensorId(d.getSerialNumber(), PageRequest.of(0, 1))
-                    .stream().findFirst().orElse(null);
+            RadiationReadingView last = d.getSerialNumber() == null ? null
+                    : readings.latest(d.getSerialNumber()).orElse(null);
             return new DiscoverableDeviceDto(
                     d.getId(),
                     d.getSerialNumber(),
                     d.getName(),
                     d.getType(),
-                    last != null ? last.getValue() : null,
-                    last != null ? last.getLevel() : null,
-                    last != null ? last.getRecordedAt() : null,
-                    d.getSerialNumber() != null ? readingRepository.countBySensorId(d.getSerialNumber()) : 0
+                    last != null ? last.value() : null,
+                    last != null ? last.level() : null,
+                    last != null ? last.recordedAt() : null,
+                    d.getSerialNumber() != null ? readings.countBySensor(d.getSerialNumber()) : 0
             );
         }).toList();
     }

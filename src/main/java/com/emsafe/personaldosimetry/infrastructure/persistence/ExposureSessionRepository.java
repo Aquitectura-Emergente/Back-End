@@ -24,7 +24,7 @@ public interface ExposureSessionRepository extends JpaRepository<ExposureSession
 
     Optional<ExposureSession> findFirstByWorkerIdOrderByStartedAtDesc(Long workerId);
 
-    /** Jornadas del dosÃ­metro que cubren un instante (la mÃ¡s reciente primero). */
+    /** Jornadas del dosímetro que cubren un instante (la más reciente primero). */
     @Query("""
             select s.id from ExposureSession s
             where s.deviceId = :deviceId and s.startedAt <= :at and (s.endedAt is null or s.endedAt > :at)

@@ -177,7 +177,7 @@ public class PersonalDosimetryService {
         return new DosimetryResources.Ingestion(DosimetryResources.Reading.from(reading), false, view(session));
     }
 
-    /** Jornada del dosÃ­metro que cubre la hora de captura, para enrutar lecturas que llegan sin sesiÃ³n. */
+    /** Jornada del dosímetro que cubre la hora de captura, para enrutar lecturas que llegan sin sesión. */
     @Transactional(readOnly = true)
     public java.util.Optional<String> sessionCoveringDevice(Long deviceId, Instant at) {
         return sessions.findSessionIdsCovering(deviceId, at, PageRequest.of(0, 1)).stream().findFirst();

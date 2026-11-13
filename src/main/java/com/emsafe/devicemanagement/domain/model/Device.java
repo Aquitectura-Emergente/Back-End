@@ -86,9 +86,7 @@ public class Device {
     @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
 
-    /** Orden del usuario en el modelo antiguo; la reemplaza {@link PlugCommand}. */
-    @Column(name = "desired_plug", length = 8)
-    private String desiredPlug;
+
 
     /** Organización o cliente dueño del dispositivo. */
     @ManyToOne(fetch = FetchType.LAZY)
@@ -519,13 +517,7 @@ public class Device {
         return true;
     }
 
-    /** Orden del usuario en el modelo antiguo. Solo ON y OFF. */
-    public void requestPlug(String plug) {
-        if (plug == null || !(plug.equalsIgnoreCase("ON") || plug.equalsIgnoreCase("OFF"))) {
-            throw new BadRequestException("plug must be ON or OFF");
-        }
-        this.desiredPlug = plug.toUpperCase();
-    }
+
 
     // ─── Pendientes para el repositorio ───────────────────────────────────────
 

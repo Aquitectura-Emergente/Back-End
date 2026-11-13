@@ -1,38 +1,24 @@
 package com.emsafe.devicemanagement.interfaces.rest;
 
-import com.emsafe.shared.dto.ApiResponse;
-import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingDto;
-import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingIngestRequest;
 import com.emsafe.devicemanagement.application.TelemetryService;
+import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingDto;
+import com.emsafe.shared.dto.ApiResponse;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * API de telemetría IoT (v1).
- *
- * - POST /api/v1/readings                       → ingesta desde el edge.
- * - GET  /api/v1/readings                       → lecturas recientes (filtro opcional ?serialNumber=, ?limit=).
- * - GET  /api/v1/readings/{serialNumber}/latest → última lectura de un sensor.
- *
- * `/api/v1/**` está expuesto en SecurityConfig (el edge no tiene JWT).
- */
+/** Consulta de lecturas. La ingesta es por MQTT (iot/{deviceId}/telemetry). */
 @RestController
 @RequestMapping("/api/v1/readings")
 @RequiredArgsConstructor
 public class ReadingController {
-
     private final TelemetryService telemetryService;
-
-    @PostMapping
-    public ResponseEntity<ApiResponse<ReadingDto>> ingest(@RequestBody ReadingIngestRequest request) {
-        ReadingDto saved = telemetryService.ingest(request);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok("Reading stored", saved));
-    }
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<ReadingDto>>> list(

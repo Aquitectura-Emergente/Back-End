@@ -128,7 +128,7 @@ public class PlantEdgeService {
     }
 
     /**
-     * Conectividad que informa el Edge por MQTT (vÃ­a Device Management). Un
+     * Conectividad que informa el Edge por MQTT (vía Device Management). Un
      * serial no declarado se ignora: el Edge puede existir antes de declararse.
      */
     @Transactional
