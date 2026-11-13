@@ -13,7 +13,18 @@ public record AlertDto(
         String resolvedAt,
         String recipientType,
         String clientName,
-        String sensor
+        String sensor,
+
+        // ─── Alerta de operario (V23) ─────────────────────────────────────────
+        // Nulos en una alarma de cliente. Añadir campos a esta respuesta es
+        // aditivo: el front y el móvil ignoran los que no conocen.
+        Long organizationId,
+        Long workerId,
+        String sessionId,
+        String acknowledgedAt,
+        String escalatedAt,
+        Long ssoResponsibleId,
+        String escalationReason
 ) {
     public static AlertDto from(Alert a) {
         return new AlertDto(
@@ -27,7 +38,14 @@ public record AlertDto(
                 a.getResolvedAt() != null ? a.getResolvedAt().toString() : null,
                 a.getRecipientType(),
                 a.getClientName(),
-                a.getSensor()
+                a.getSensor(),
+                a.getOrganizationId(),
+                a.getWorkerId(),
+                a.getSessionId(),
+                a.getAcknowledgedAt() != null ? a.getAcknowledgedAt().toString() : null,
+                a.getEscalatedAt() != null ? a.getEscalatedAt().toString() : null,
+                a.getSsoResponsibleId(),
+                a.getEscalationReason()
         );
     }
 }

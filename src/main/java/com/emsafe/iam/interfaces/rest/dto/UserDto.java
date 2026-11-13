@@ -24,12 +24,12 @@ public record UserDto(
         String country,
         String contactName,
         String contactEmail,
-        String contactPhone
+        String contactPhone,
+        Long organizationId
 ) {
     public static UserDto from(AppUser u) {
-        // Serialize role as title-case to match Angular frontend ("Admin", "Technician", "Client")
-        String roleName = u.getRole().name();
-        String roleDisplay = roleName.charAt(0) + roleName.substring(1).toLowerCase();
+        // Serialize role as title-case to match Angular frontend ("Admin", "Technician", "Client", "Worker", "SsoResponsible")
+        String roleDisplay = u.getRole().displayName();
 
         return new UserDto(
                 u.getId(),
@@ -51,7 +51,8 @@ public record UserDto(
                 u.getCountry(),
                 u.getContactName(),
                 u.getContactEmail(),
-                u.getContactPhone()
+                u.getContactPhone(),
+                u.getOrganizationId()
         );
     }
 }

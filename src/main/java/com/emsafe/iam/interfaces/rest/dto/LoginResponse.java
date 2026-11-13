@@ -7,5 +7,6 @@ public record LoginResponse(
         String initials,
         String role,
         Long userId,
-        Long technicianId
+        Long technicianId,
+        Long organizationId
 ) {}

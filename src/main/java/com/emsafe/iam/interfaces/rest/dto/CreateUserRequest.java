@@ -28,5 +28,8 @@ public record CreateUserRequest(
         String specialty,
         String department,
         LocalDate joinDate,
-        String notes
+        String notes,
+
+        /** Obligatorio para WORKER y SSO_RESPONSIBLE: id de la cuenta CLIENT (organización). */
+        Long organizationId
 ) {}

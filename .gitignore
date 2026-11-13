@@ -42,3 +42,8 @@ deploy/.env.demo
 deploy/backups/
 !deploy/.env.example
 !deploy/.env.demo.example
+
+# ── Occupational Health ───────────────────────────────────────────────────────
+# PDF de los reportes de cumplimiento (LocalFileReportStorage). Contienen
+# exposición de operarios, que es dato de salud: no se versionan jamás.
+data/

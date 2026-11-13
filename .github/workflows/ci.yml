@@ -1,4 +1,6 @@
-# CI del backend: compila y valida que la imagen Docker se construya.
+# CI del backend: compila, ejecuta los tests y valida que la imagen Docker se
+# construya. Corre en main y en develop, porque el equipo integra en develop y
+# un PR a esa rama también tiene que estar verde.
 # El despliegue NO va aquí: la VM de Oracle hace pull + build por SSH
 # (ver deploy/README.md). Los workflows *.disabled de esta carpeta son los
 # antiguos de Azure App Service, conservados como referencia histórica.
@@ -7,9 +9,9 @@ name: CI — Back-End
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 jobs:
@@ -26,8 +28,18 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Compilar
-        run: mvn -B clean package -DskipTests
+      # Los tests SÍ se ejecutan. Antes este paso llevaba -DskipTests, cuando
+      # src/test/ tenía un único archivo que además estaba roto (H2 2.x reserva
+      # VALUE y radiation_readings.value se llama así), así que el check en verde
+      # no decía nada sobre corrección. Ahora son 81 tests sobre H2 en memoria:
+      # no necesitan MySQL ni red, así que corren igual en el runner.
+      #
+      # Ojo con los nombres: surefire recoge *Test, Test* y *Tests. Un test
+      # llamado *IT se ignora en silencio (ese sufijo es de failsafe, que este
+      # repo no configura), así que la clase de integración acaba en
+      # ...IntegrationTest a propósito.
+      - name: Compilar y probar
+        run: mvn -B clean package
 
       - name: Verificar que la imagen Docker se construye
         run: docker build -t emsafe-backend:ci .

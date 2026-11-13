@@ -85,7 +85,8 @@ public class AuthService {
                     user.getInitials(),
                     user.getRole().name().toLowerCase(),
                     user.getId(),
-                    technicianId
+                    technicianId,
+                    user.getOrganizationId()
             );
         } catch (BadCredentialsException ex) {
             loginAttemptService.registerFailure(req.email());

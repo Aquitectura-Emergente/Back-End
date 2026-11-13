@@ -1,0 +1,71 @@
+# Construye la imagen del backend y la empuja a Azure Container Registry.
+#
+# ── Por que esto NO despliega ────────────────────────────────────────────────
+#
+# Desplegar exige llamar a `az containerapp update`, que necesita autenticarse
+# contra ARM, y eso requiere un service principal. El tenant de la universidad
+# tiene `allowedToCreateApps = false`, asi que no se puede crear ninguno:
+# verificado el 2026-11-13 contra Graph.
+#
+# Empujar a ACR si se puede, porque es un `docker login` con usuario y clave del
+# propio registro, sin AAD de por medio. Entonces este workflow deja la imagen
+# construida, probada y etiquetada, y el despliegue es UN comando a mano:
+#
+#   az containerapp update -g emsafe-rg -n emsafe-backend \
+#     --image emsafeacr203794.azurecr.io/emsafe-backend:<sha>
+#
+# Se etiqueta con el SHA del commit y no solo con `latest` a proposito: con
+# `latest`, Container Apps puede no detectar que la imagen cambio y dejar
+# corriendo la anterior — el despliegue "funciona" y no cambia nada.
+#
+# Secretos que hay que crear en el repositorio:
+#   ACR_LOGIN_SERVER   emsafeacr203794.azurecr.io
+#   ACR_USERNAME       az acr credential show -n emsafeacr203794 --query username -o tsv
+#   ACR_PASSWORD       az acr credential show -n emsafeacr203794 --query "passwords[0].value" -o tsv
+
+name: Image — Azure Container Registry
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build_and_push:
+    name: Probar, construir y empujar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # El Dockerfile compila con -DskipTests, asi que si no se corren aqui no
+      # se corren en ninguna parte y la imagen se publicaria sin verificar.
+      - name: Tests
+        run: ./mvnw -B clean test
+
+      - name: Login en ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Construir y empujar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/emsafe-backend:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/emsafe-backend:latest
+
+      - name: Comando de despliegue
+        run: |
+          echo "Imagen lista. Para desplegarla:"
+          echo "az containerapp update -g emsafe-rg -n emsafe-backend --image ${{ secrets.ACR_LOGIN_SERVER }}/emsafe-backend:${{ github.sha }}"
