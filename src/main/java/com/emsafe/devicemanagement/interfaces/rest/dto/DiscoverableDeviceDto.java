@@ -1,4 +1,4 @@
-package com.emsafe.iottelemetry.interfaces.rest.dto;
+package com.emsafe.devicemanagement.interfaces.rest.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;

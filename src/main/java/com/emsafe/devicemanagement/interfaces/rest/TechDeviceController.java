@@ -1,7 +1,7 @@
-package com.emsafe.iottelemetry.interfaces.rest;
+package com.emsafe.devicemanagement.interfaces.rest;
 
-import com.emsafe.iottelemetry.interfaces.rest.dto.DiscoverableDeviceDto;
-import com.emsafe.iottelemetry.application.DeviceService;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DiscoverableDeviceDto;
+import com.emsafe.devicemanagement.application.DeviceService;
 import com.emsafe.shared.dto.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;

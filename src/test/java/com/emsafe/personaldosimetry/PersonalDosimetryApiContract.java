@@ -2,8 +2,8 @@ package com.emsafe.personaldosimetry;
 
 import com.emsafe.iam.domain.model.*;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
 import com.emsafe.personaldosimetry.application.*;
 import com.emsafe.personaldosimetry.domain.model.*;
 import com.emsafe.personaldosimetry.infrastructure.persistence.*;

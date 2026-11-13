@@ -1,13 +1,13 @@
-package com.emsafe.iottelemetry.application;
+package com.emsafe.devicemanagement.application;
 
 import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
 import com.emsafe.shared.exception.BadRequestException;
 import com.emsafe.shared.exception.ResourceNotFoundException;
-import com.emsafe.iottelemetry.interfaces.rest.dto.ReadingDto;
-import com.emsafe.iottelemetry.interfaces.rest.dto.ReadingIngestRequest;
+import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingDto;
+import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingIngestRequest;
 import com.emsafe.iam.domain.model.AppUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;

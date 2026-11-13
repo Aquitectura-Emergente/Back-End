@@ -1,6 +1,6 @@
 package com.emsafe.plantconfiguration.application;
 
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
 import com.emsafe.plantconfiguration.domain.model.PlantConfigurationRuleException;
 import com.emsafe.plantconfiguration.domain.model.PlantEdge;
 import com.emsafe.plantconfiguration.domain.model.PlantZone;

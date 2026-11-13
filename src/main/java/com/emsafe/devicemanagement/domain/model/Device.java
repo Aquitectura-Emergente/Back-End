@@ -1,4 +1,4 @@
-package com.emsafe.iottelemetry.domain.model;
+package com.emsafe.devicemanagement.domain.model;
 
 import com.emsafe.iam.domain.model.AppUser;
 import com.emsafe.shared.exception.BadRequestException;

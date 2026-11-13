@@ -1,4 +1,4 @@
-package com.emsafe.iottelemetry.interfaces.rest.dto;
+package com.emsafe.devicemanagement.interfaces.rest.dto;
 
 import jakarta.validation.constraints.NotBlank;
 

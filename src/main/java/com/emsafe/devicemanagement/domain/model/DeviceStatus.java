@@ -1,4 +1,4 @@
-package com.emsafe.iottelemetry.domain.model;
+package com.emsafe.devicemanagement.domain.model;
 
 /**
  * Estados del ciclo de vida de un dispositivo.

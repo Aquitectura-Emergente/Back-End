@@ -1,9 +1,9 @@
-package com.emsafe.iottelemetry.interfaces.rest;
+package com.emsafe.devicemanagement.interfaces.rest;
 
 import com.emsafe.shared.dto.ApiResponse;
-import com.emsafe.iottelemetry.interfaces.rest.dto.ReadingDto;
-import com.emsafe.iottelemetry.interfaces.rest.dto.ReadingIngestRequest;
-import com.emsafe.iottelemetry.application.TelemetryService;
+import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingDto;
+import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingIngestRequest;
+import com.emsafe.devicemanagement.application.TelemetryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

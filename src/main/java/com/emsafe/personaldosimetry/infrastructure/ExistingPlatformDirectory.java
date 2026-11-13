@@ -3,7 +3,7 @@ package com.emsafe.personaldosimetry.infrastructure;
 import com.emsafe.iam.domain.model.AppUser;
 import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
 import com.emsafe.personaldosimetry.application.DosimetryDirectory;
 import com.emsafe.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;

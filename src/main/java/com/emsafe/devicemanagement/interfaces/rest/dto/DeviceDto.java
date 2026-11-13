@@ -1,6 +1,6 @@
-package com.emsafe.iottelemetry.interfaces.rest.dto;
+package com.emsafe.devicemanagement.interfaces.rest.dto;
 
-import com.emsafe.iottelemetry.domain.model.Device;
+import com.emsafe.devicemanagement.domain.model.Device;
 
 public record DeviceDto(
         Long id,

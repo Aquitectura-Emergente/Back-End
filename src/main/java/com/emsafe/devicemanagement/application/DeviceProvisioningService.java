@@ -1,10 +1,10 @@
-package com.emsafe.iottelemetry.application;
+package com.emsafe.devicemanagement.application;
 
 import com.emsafe.iam.domain.model.AppUser;
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.domain.model.DeviceStatus;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
-import com.emsafe.iottelemetry.interfaces.rest.dto.DeviceDto;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.domain.model.DeviceStatus;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceDto;
 import com.emsafe.shared.exception.BadRequestException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,7 +20,7 @@ import java.util.List;
  * Existe como frontera entre bounded contexts: antes, WorkOrderService inyectaba
  * DeviceRepository y manipulaba el estado de los sensores a mano, con literales
  * sueltos. El contexto de órdenes de trabajo ahora pide lo que necesita en el
- * lenguaje del negocio —reclamar, instalar, recoger— y es iottelemetry quien
+ * lenguaje del negocio —reclamar, instalar, recoger— y es Device Management quien
  * decide cómo se traduce eso al agregado Device.
  */
 @Service

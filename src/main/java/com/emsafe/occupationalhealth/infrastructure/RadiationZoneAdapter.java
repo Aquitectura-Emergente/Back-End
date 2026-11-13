@@ -1,7 +1,7 @@
 package com.emsafe.occupationalhealth.infrastructure;
 
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
 import com.emsafe.occupationalhealth.domain.model.ReportPeriod;
 import com.emsafe.occupationalhealth.domain.model.ZoneRiskLevel;
 import com.emsafe.occupationalhealth.domain.model.ZoneStatistics;

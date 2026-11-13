@@ -1,6 +1,6 @@
 package com.emsafe.radiationmonitoring.domain.model;
 
-import com.emsafe.iottelemetry.domain.model.Device;
+import com.emsafe.devicemanagement.domain.model.Device;
 import jakarta.persistence.*;
 import lombok.*;
 

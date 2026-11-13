@@ -1,6 +1,6 @@
-package com.emsafe.iottelemetry.infrastructure.persistence;
+package com.emsafe.devicemanagement.infrastructure.persistence;
 
-import com.emsafe.iottelemetry.domain.model.Device;
+import com.emsafe.devicemanagement.domain.model.Device;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 

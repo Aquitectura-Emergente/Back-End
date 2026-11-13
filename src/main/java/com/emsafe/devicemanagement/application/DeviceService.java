@@ -1,12 +1,12 @@
-package com.emsafe.iottelemetry.application;
+package com.emsafe.devicemanagement.application;
 
 import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
-import com.emsafe.iottelemetry.interfaces.rest.dto.CreateDeviceRequest;
-import com.emsafe.iottelemetry.interfaces.rest.dto.DeviceDto;
-import com.emsafe.iottelemetry.interfaces.rest.dto.DiscoverableDeviceDto;
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.interfaces.rest.dto.CreateDeviceRequest;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceDto;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DiscoverableDeviceDto;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
 import com.emsafe.shared.exception.ResourceNotFoundException;
 import com.emsafe.iam.domain.model.AppUser;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;

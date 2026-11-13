@@ -1,8 +1,8 @@
-package com.emsafe.iottelemetry.interfaces.rest;
+package com.emsafe.devicemanagement.interfaces.rest;
 
 import com.emsafe.shared.dto.ApiResponse;
-import com.emsafe.iottelemetry.interfaces.rest.dto.PlugStateDto;
-import com.emsafe.iottelemetry.application.TelemetryService;
+import com.emsafe.devicemanagement.interfaces.rest.dto.PlugStateDto;
+import com.emsafe.devicemanagement.application.TelemetryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
