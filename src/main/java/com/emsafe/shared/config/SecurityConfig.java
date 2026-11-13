@@ -96,6 +96,15 @@ public class SecurityConfig {
                         .requestMatchers("/api/client/**").hasAnyRole("CLIENT", "ADMIN")
                         // SSO panel — solo el responsable de SSO (el ADMIN NO hereda ni se mezcla aquí)
                         .requestMatchers("/api/sso/**").hasRole("SSO_RESPONSIBLE")
+                        // Evidencia de alertas de operario (V23). Sin estas dos reglas
+                        // caerían en el anyRequest() de abajo y quedarían solo para
+                        // ADMIN, que es justo quien NO acusa ni escala.
+                        // Acusar lo hace el operario; escalar, el responsable de SSO.
+                        // El resto de /api/alarms/** sigue siendo ADMIN.
+                        .requestMatchers(HttpMethod.POST, "/api/alarms/*/acknowledge")
+                                .hasAnyRole("WORKER", "ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/alarms/*/escalate")
+                                .hasAnyRole("SSO_RESPONSIBLE", "ADMIN")
                         // Profile endpoints — own account (UserController.assertSelfOrAdmin limita a uno mismo)
                         .requestMatchers(HttpMethod.GET,   "/api/users/profile")
                         .hasAnyRole("TECHNICIAN", "ADMIN", "WORKER", "SSO_RESPONSIBLE")

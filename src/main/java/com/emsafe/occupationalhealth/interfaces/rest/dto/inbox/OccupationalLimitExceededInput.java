@@ -15,6 +15,8 @@ public record OccupationalLimitExceededInput(
         String unit,
         BigDecimal limit,
         String limitVersionId,
+        /** Método de cálculo con el que Dosimetry obtuvo la cifra. */
+        String methodId,
         LocalDateTime capturedAt,
         LocalDateTime detectedAt
 ) {

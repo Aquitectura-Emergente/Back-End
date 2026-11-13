@@ -1,5 +1,13 @@
 package com.emsafe.occupationalhealth;
 
+import com.emsafe.aiforecasting.application.ForecastingEventFactory;
+import com.emsafe.aiforecasting.application.UpsertExposureSnapshotHandler;
+import com.emsafe.aiforecasting.application.commands.UpsertExposureSnapshotCommand;
+import com.emsafe.aiforecasting.domain.model.WorkerExposureSnapshot;
+import com.emsafe.aiforecasting.domain.ports.ForecastingOutboxPort;
+import com.emsafe.aiforecasting.domain.ports.OutboxEvent;
+import com.emsafe.aiforecasting.domain.ports.WorkerSnapshotRepository;
+import com.emsafe.aiforecasting.infrastructure.ForecastingOutboxRelay;
 import com.emsafe.iam.domain.model.AppUser;
 import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.domain.model.UserStatus;
@@ -18,6 +26,9 @@ import com.emsafe.occupationalhealth.infrastructure.persistence.MitigationAction
 import com.emsafe.occupationalhealth.infrastructure.persistence.MitigationAuditEntryRepository;
 import com.emsafe.occupationalhealth.infrastructure.persistence.ProcessedMessageRepository;
 import com.emsafe.occupationalhealth.infrastructure.persistence.WorkerShiftRepository;
+import com.emsafe.personaldosimetry.domain.model.DosimetryEvent;
+import com.emsafe.personaldosimetry.infrastructure.DosimetryOutboxRelay;
+import com.emsafe.personaldosimetry.infrastructure.persistence.DosimetryEventRepository;
 import com.emsafe.plantconfiguration.domain.model.PlantZone;
 import com.emsafe.plantconfiguration.infrastructure.persistence.PlantZoneRepository;
 import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
@@ -35,9 +46,14 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
@@ -94,6 +110,12 @@ class OccupationalHealthApiIntegrationTest {
     @Autowired ClosedSessionRecordRepository closedSessions;
     @Autowired ComplianceReportRepository reports;
     @Autowired PlantZoneRepository plantZones;
+    @Autowired UpsertExposureSnapshotHandler forecastingSnapshots;
+    @Autowired WorkerSnapshotRepository forecastingSnapshotStore;
+    @Autowired ForecastingOutboxPort forecastingOutbox;
+    @Autowired org.springframework.context.ApplicationEventPublisher eventPublisher;
+    @Autowired DosimetryEventRepository dosimetryEvents;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     private Long workerId;
     private Long safeZoneId;
@@ -124,6 +146,7 @@ class OccupationalHealthApiIntegrationTest {
         readings.deleteAll();
         devices.deleteAll();
         plantZones.deleteAll();
+        dosimetryEvents.deleteAll();
 
         workerId = userId(WORKER_EMAIL, Role.WORKER, ORG);
         userId(SSO_EMAIL, Role.SSO_RESPONSIBLE, ORG);
@@ -236,6 +259,382 @@ class OccupationalHealthApiIntegrationTest {
                 .andExpect(jsonPath("$.data.assignments.length()").value(2))
                 .andExpect(jsonPath("$.data.assignments[0].to").exists())
                 .andExpect(jsonPath("$.data.assignments[1].sourceActionId").exists());
+    }
+
+    /**
+     * El tramo que faltaba: que el {@code ShiftUpdated} llegue de verdad al inbox
+     * de AI Forecasting.
+     *
+     * <p>No basta el test del listener: esto es lo único que comprueba que Spring
+     * lo invoca tras el commit y que la transacción nueva persiste. Con la
+     * propagación por defecto el guardado se perdería sin error visible.</p>
+     */
+    @Test
+    @WithMockUser(username = SSO_EMAIL, roles = {"SSO_RESPONSIBLE"})
+    @DisplayName("reubicar mueve también el snapshot de AI Forecasting")
+    void relocationReachesTheForecastingInbox() throws Exception {
+        String sessionId = "S-IT-E2E";
+        Long toZoneId = zoneWithReading("IT zona segura 2", 12.0, "safe");
+        startShiftLinkedTo(sessionId);
+        seedForecastingSnapshot(workerId, sessionId, String.valueOf(safeZoneId), 1001L);
+
+        mvc.perform(post(API + "/mitigation-actions/relocations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"workerId\":" + workerId + ",\"toPositionId\":1002,"
+                                + "\"toZoneId\":" + toZoneId + ",\"justification\":\"IT\"}"))
+                .andExpect(status().isCreated());
+
+        WorkerExposureSnapshot moved = forecastingSnapshotStore.findBySessionId(sessionId).orElseThrow();
+        // La zona viaja como el id decimal de plant_zones: es la identidad canónica.
+        assertEquals(String.valueOf(toZoneId), moved.zoneId());
+        assertEquals(1002L, moved.positionId());
+    }
+
+    /**
+     * Un operario puede rotar sin que AI Forecasting siga su sesión. El inbox
+     * responde 409 y eso no debe volverse un error del SSO: la reubicación ya
+     * ocurrió y no se puede deshacer.
+     */
+    @Test
+    @WithMockUser(username = SSO_EMAIL, roles = {"SSO_RESPONSIBLE"})
+    @DisplayName("reubicar funciona aunque AI Forecasting no conozca la sesión")
+    void relocationSucceedsWhenForecastingHasNoSnapshot() throws Exception {
+        Long toZoneId = zoneWithReading("IT zona segura 3", 11.0, "safe");
+        startShiftLinkedTo("S-IT-UNKNOWN");
+
+        mvc.perform(post(API + "/mitigation-actions/relocations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"workerId\":" + workerId + ",\"toPositionId\":1002,"
+                                + "\"toZoneId\":" + toZoneId + ",\"justification\":\"IT\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.state").value("APPLIED"));
+
+        mvc.perform(get(API + "/workers/" + workerId + "/shifts/current"))
+                .andExpect(jsonPath("$.data.assignments.length()").value(2));
+        assertTrue(forecastingSnapshotStore.findBySessionId("S-IT-UNKNOWN").isEmpty());
+    }
+
+    /**
+     * El círculo completo con el contexto del compañero: AI Forecasting sugiere
+     * la rotación, el SSO la aprueba y el resultado vuelve a AI Forecasting.
+     *
+     * <p>Una rotación es un intercambio, así que aprobarla publica <b>dos</b>
+     * {@code ShiftUpdated} —uno por operario— y los dos snapshots tienen que
+     * acabar cruzados.</p>
+     */
+    @Test
+    @DisplayName("aprobar una rotación sugerida cruza los dos snapshots de AI Forecasting")
+    void approvedRotationReachesTheForecastingInbox() throws Exception {
+        Long partnerId = userId("partner-it@emsafe.test", Role.WORKER, ORG);
+        Long partnerZoneId = zoneWithReading("IT zona segura 4", 15.0, "safe");
+
+        startShiftFor(workerId, 1001L, safeZoneId, "S-IT-AT-RISK");
+        startShiftFor(partnerId, 1002L, partnerZoneId, "S-IT-PARTNER");
+        seedForecastingSnapshot(workerId, "S-IT-AT-RISK", String.valueOf(safeZoneId), 1001L);
+        seedForecastingSnapshot(partnerId, "S-IT-PARTNER", String.valueOf(partnerZoneId), 1002L);
+
+        mvc.perform(post(API + "/inbox/rotation-suggested")
+                        .with(asAdmin())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"organizationId\":" + ORG + ",\"workerId\":" + workerId
+                                + ",\"suggestionId\":\"sg-e2e\",\"candidateWorkerIds\":["
+                                + partnerId + "],\"rationale\":\"proyeccion IT\"}"))
+                .andExpect(status().isAccepted());
+
+        List<MitigationAction> open = actions.findOpenByWorker(ORG, workerId);
+        assertEquals(1, open.size(), "la sugerencia viable deja una rotación propuesta");
+        MitigationAction rotation = open.get(0);
+        assertEquals(MitigationType.ROTATION, rotation.getType());
+        assertEquals(MitigationOrigin.AI_SUGGESTION, rotation.getOrigin());
+
+        mvc.perform(post(API + "/mitigation-actions/" + rotation.getId() + "/approve")
+                        .with(asSso())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"aprobada IT\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("APPLIED"));
+
+        // Cada uno ocupa ahora el puesto y la zona del otro.
+        WorkerExposureSnapshot atRisk = forecastingSnapshotStore
+                .findBySessionId("S-IT-AT-RISK").orElseThrow();
+        assertEquals(String.valueOf(partnerZoneId), atRisk.zoneId());
+        assertEquals(1002L, atRisk.positionId());
+
+        WorkerExposureSnapshot partner = forecastingSnapshotStore
+                .findBySessionId("S-IT-PARTNER").orElseThrow();
+        assertEquals(String.valueOf(safeZoneId), partner.zoneId());
+        assertEquals(1001L, partner.positionId());
+    }
+
+    // ── El relay del outbox de AI Forecasting ────────────────────────────────
+
+    /**
+     * El sentido contrario: lo que el agente sugiere tiene que llegar aquí.
+     *
+     * <p>Antes del relay, {@code RotationSuggested} se quedaba en {@code af_outbox}
+     * y la única forma de que entrara era un POST manual al inbox.</p>
+     */
+    @Test
+    @DisplayName("el relay entrega una sugerencia del outbox y la deja propuesta")
+    void relayDeliversRotationSuggested() throws Exception {
+        Long partnerId = userId("partner-relay@emsafe.test", Role.WORKER, ORG);
+        Long partnerZoneId = zoneWithReading("IT zona relay", 14.0, "safe");
+        startShiftFor(workerId, 1001L, safeZoneId, "S-RELAY-A");
+        startShiftFor(partnerId, 1002L, partnerZoneId, "S-RELAY-B");
+        forecastingOutbox.append(rotationSuggestedInOutbox("af-ev-1", partnerId));
+
+        assertEquals(1, relay().drainOnce());
+
+        List<MitigationAction> open = actions.findOpenByWorker(ORG, workerId);
+        assertEquals(1, open.size(), "la sugerencia entra como una propuesta");
+        assertEquals(MitigationType.ROTATION, open.get(0).getType());
+        assertEquals(MitigationOrigin.AI_SUGGESTION, open.get(0).getOrigin());
+        assertNotNull(forecastingOutbox.findById("af-ev-1").orElseThrow().publishedAt(),
+                "entregado es publicado");
+    }
+
+    @Test
+    @DisplayName("una segunda pasada no reentrega ni duplica la propuesta")
+    void relayDoesNotRedeliver() throws Exception {
+        Long partnerId = userId("partner-relay2@emsafe.test", Role.WORKER, ORG);
+        Long partnerZoneId = zoneWithReading("IT zona relay 2", 13.0, "safe");
+        startShiftFor(workerId, 1001L, safeZoneId, "S-RELAY-C");
+        startShiftFor(partnerId, 1002L, partnerZoneId, "S-RELAY-D");
+        forecastingOutbox.append(rotationSuggestedInOutbox("af-ev-2", partnerId));
+
+        relay().drainOnce();
+        assertEquals(0, relay().drainOnce(), "ya no está pendiente");
+
+        assertEquals(1, actions.findOpenByWorker(ORG, workerId).size());
+    }
+
+    /**
+     * Si no se marcaran, encabezarían la cola para siempre y taparían los hechos
+     * siguientes. Marcar no borra: el evento sigue en la tabla.
+     */
+    @Test
+    @DisplayName("un hecho sin consumidor se marca y no atasca la cola")
+    void relayMarksEventsWithoutConsumer() {
+        forecastingOutbox.append(new OutboxEvent("af-ev-3",
+                ForecastingEventFactory.PREDICTIVE_RISK_DETECTED, OutboxEvent.SCHEMA_VERSION,
+                ORG, "assessment-1", Instant.now().truncatedTo(ChronoUnit.MICROS),
+                "corr-3", null, Map.of("workerId", workerId, "criticality", "HIGH"), null));
+
+        assertEquals(1, relay().drainOnce());
+
+        assertNotNull(forecastingOutbox.findById("af-ev-3").orElseThrow().publishedAt());
+        assertTrue(actions.findOpenByWorker(ORG, workerId).isEmpty(),
+                "no abre ninguna medida: nadie lo consume todavía");
+    }
+
+    /**
+     * Se construye a mano porque el bean está apagado en el perfil de test: un
+     * @Scheduled dispararía en medio de los asserts. Lo que no queda cubierto es
+     * el cableado del scheduler, igual que pasa con RetentionJob.
+     */
+    private ForecastingOutboxRelay relay() {
+        return new ForecastingOutboxRelay(forecastingOutbox, eventPublisher, Clock.systemUTC());
+    }
+
+    private Map<String, Object> rotationPayload(Long candidateId) {
+        return Map.of(
+                "organizationId", ORG,
+                "workerId", workerId,
+                "suggestionId", "assessment-sg",
+                "candidateWorkerIds", List.of(candidateId),
+                "projectedExceedanceAt", LocalDateTime.now().plusHours(2)
+                        .format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+                "criticality", "HIGH",
+                "rationale", "proyeccion del agente");
+    }
+
+    private OutboxEvent rotationSuggestedInOutbox(String eventId, Long candidateId) {
+        return new OutboxEvent(eventId, ForecastingEventFactory.ROTATION_SUGGESTED,
+                OutboxEvent.SCHEMA_VERSION, ORG, "assessment-sg",
+                Instant.now().truncatedTo(ChronoUnit.MICROS), "corr-" + eventId, "cause-" + eventId,
+                rotationPayload(candidateId), null);
+    }
+
+    // ── El relay del outbox de Personal Dosimetry ────────────────────────────
+
+    /**
+     * Una excedencia confirmada por dosimetría tiene que abrir una medida sola.
+     *
+     * <p>Lo que se vigila aquí es la <b>unidad</b>: lo que viaja es un índice
+     * {@code uT*s}, no una dosis certificada, y el snapshot tiene que conservarlo
+     * tal cual. Si se perdiera, un reporte de cumplimiento afirmaría una cifra sin
+     * decir en qué está medida.</p>
+     */
+    @Test
+    @DisplayName("el relay entrega la excedencia y conserva la unidad del indice")
+    void relayDeliversExceedanceKeepingTheUnit() throws Exception {
+        startShiftLinkedTo("sess-dose");
+        dosimetryEvents.save(dosimetryOutboxEvent(
+                DosimetryOutboxRelay.LIMIT_EXCEEDED, exceedancePayload()));
+
+        assertEquals(1, dosimetryRelay().drainOnce());
+
+        List<MitigationAction> open = actions.findOpenByWorker(ORG, workerId);
+        assertEquals(1, open.size(), "la excedencia abre una propuesta");
+        MitigationAction proposal = open.get(0);
+        assertEquals(MitigationState.PROPOSED, proposal.getState());
+        assertEquals(MitigationOrigin.LIMIT_EXCEEDED, proposal.getOrigin());
+        assertTrue(proposal.hasPendingTarget(), "la excedencia no dice a donde llevarlo");
+
+        var dose = proposal.getAffectedWorkers().get(0).getDoseAtDecision();
+        assertEquals(0, dose.getValue().compareTo(new BigDecimal("900")));
+        assertEquals("uT*s", dose.getUnit(), "la unidad del indice no se pierde");
+        assertEquals(0, dose.getLimit().compareTo(new BigDecimal("800")));
+        // Antes del 2026-11-12 aqui se guardaba el limitVersionId ("L1").
+        assertEquals("MAGNETIC_TIME_INDEX_V1", dose.getMethodId(),
+                "dose_method_id guarda el metodo de calculo, no la version del limite");
+
+        assertNotNull(dosimetryEvents.findAll().get(0).getPublishedAt());
+    }
+
+    /**
+     * El cierre de jornada alimenta la proyección que exportan los reportes de
+     * cumplimiento, así que se comprueba que llega entera: cifra, unidad, método
+     * y cobertura.
+     */
+    @Test
+    @DisplayName("el cierre de jornada llega a la proyeccion con sus cuatro datos")
+    void relayDeliversSessionClosed() throws Exception {
+        startShiftLinkedTo("sess-dose");
+        dosimetryEvents.save(dosimetryOutboxEvent(
+                DosimetryOutboxRelay.SESSION_CLOSED, sessionClosedPayload(true)));
+
+        assertEquals(1, dosimetryRelay().drainOnce());
+
+        var record = closedSessions.findByOrganizationIdAndSessionId(ORG, "sess-dose").orElseThrow();
+        assertEquals(0, record.getFinalDose().getValue().compareTo(new BigDecimal("600")));
+        assertEquals("uT*s", record.getFinalDose().getUnit());
+        assertEquals("MAGNETIC_TIME_INDEX_V1", record.getFinalDose().getMethodId(),
+                "el metodo de calculo real, no el limitVersionId");
+        assertEquals(0, record.getFinalDose().getLimit().compareTo(new BigDecimal("800")));
+        assertEquals("98.50% (completa)", record.getCoverage(),
+                "porcentaje y completitud en el unico campo de texto del destino");
+        assertNotNull(record.getFinalizedAt());
+
+        // El turno vinculado a esa jornada queda cerrado.
+        assertTrue(shifts.findActiveByWorker(ORG, workerId).isEmpty());
+    }
+
+    /**
+     * Los eventos emitidos antes de que el payload llevara {@code finalizedAt}
+     * siguen pendientes en la tabla. El destino lo exige no nulo, así que sin
+     * respaldo se reintentarían y fallarían en cada pasada para siempre.
+     */
+    @Test
+    @DisplayName("un cierre de jornada antiguo sin finalizedAt se entrega igual")
+    void relayFallsBackToOccurredAtForLegacyEvents() throws Exception {
+        startShiftLinkedTo("sess-dose");
+        var legacy = new java.util.LinkedHashMap<>(sessionClosedPayload(false));
+        legacy.remove("finalizedAt");
+        dosimetryEvents.save(dosimetryOutboxEvent(DosimetryOutboxRelay.SESSION_CLOSED, legacy));
+
+        assertEquals(1, dosimetryRelay().drainOnce(), "no se queda atascado");
+
+        var record = closedSessions.findByOrganizationIdAndSessionId(ORG, "sess-dose").orElseThrow();
+        assertNotNull(record.getFinalizedAt(), "se usa el occurredAt del evento");
+        assertEquals("98.50% (incompleta)", record.getCoverage());
+    }
+
+    /**
+     * Los tipos sin destino no se marcan: marcarlos perdería el hecho. Quedan dos
+     * —{@code PersonalReadingArrivedLate} y {@code ExposureSessionCloseRequested}—;
+     * {@code ExposureWarningRaised} ya se entrega a AI Forecasting.
+     */
+    @Test
+    @DisplayName("un hecho sin destino se queda pendiente y no atasca a los demas")
+    void relayLeavesEventsWithoutDestinationPending() throws Exception {
+        startShiftLinkedTo("sess-dose");
+        dosimetryEvents.save(dosimetryOutboxEvent("PersonalReadingArrivedLate",
+                Map.of("sessionId", "sess-dose", "readingId", 1L)));
+        dosimetryEvents.save(dosimetryOutboxEvent(
+                DosimetryOutboxRelay.LIMIT_EXCEEDED, exceedancePayload()));
+
+        // El no entregable se insertó primero: si la consulta no filtrara por
+        // tipo, encabezaría la cola y taparía la excedencia.
+        assertEquals(1, dosimetryRelay().drainOnce());
+
+        var late = dosimetryEvents.findAll().stream()
+                .filter(e -> e.getEventType().equals("PersonalReadingArrivedLate"))
+                .findFirst().orElseThrow();
+        assertNull(late.getPublishedAt(), "sigue pendiente para cuando tenga consumidor");
+        assertEquals(1, actions.findOpenByWorker(ORG, workerId).size());
+    }
+
+    private Map<String, Object> sessionClosedPayload(boolean coverageComplete) {
+        return Map.ofEntries(
+                Map.entry("sessionId", "sess-dose"),
+                Map.entry("workerId", workerId),
+                Map.entry("accumulatedIndex", new BigDecimal("600")),
+                Map.entry("limitIndex", new BigDecimal("800")),
+                Map.entry("limitVersionId", "L1"),
+                Map.entry("coveragePercentage", new BigDecimal("98.50")),
+                Map.entry("coverageComplete", coverageComplete),
+                Map.entry("finalizedBy", 1L),
+                Map.entry("finalizedAt", Instant.now().truncatedTo(ChronoUnit.MICROS)),
+                Map.entry("methodId", "MAGNETIC_TIME_INDEX_V1"),
+                Map.entry("unit", "uT*s"));
+    }
+
+    /** Igual que el de forecasting: el bean está apagado en el perfil de test. */
+    private DosimetryOutboxRelay dosimetryRelay() {
+        return new DosimetryOutboxRelay(dosimetryEvents, eventPublisher, objectMapper, Clock.systemUTC());
+    }
+
+    /** Los mismos campos y el mismo ObjectMapper que usa PersonalDosimetryService.emit. */
+    private DosimetryEvent dosimetryOutboxEvent(String type, Map<String, Object> fields) {
+        var payload = new java.util.LinkedHashMap<String, Object>(fields);
+        payload.put("schemaVersion", 1);
+        payload.put("organizationId", ORG);
+        try {
+            return new DosimetryEvent(ORG, type, objectMapper.writeValueAsString(payload),
+                    Instant.now().truncatedTo(ChronoUnit.MICROS));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private Map<String, Object> exceedancePayload() {
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        return Map.of(
+                "sessionId", "sess-dose",
+                "workerId", workerId,
+                "readingId", 1L,
+                "accumulatedIndex", new BigDecimal("900"),
+                "limitIndex", new BigDecimal("800"),
+                "limitVersionId", "L1",
+                "capturedAt", now.minusSeconds(60),
+                "detectedAt", now,
+                "methodId", "MAGNETIC_TIME_INDEX_V1",
+                "unit", "uT*s");
+    }
+
+    private void startShiftLinkedTo(String exposureSessionId) throws Exception {
+        startShiftFor(workerId, 1001L, safeZoneId, exposureSessionId);
+    }
+
+    private void startShiftFor(Long worker, Long positionId, Long zoneId, String exposureSessionId)
+            throws Exception {
+        mvc.perform(post(API + "/workers/" + worker + "/shifts")
+                        .with(asSso())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"jobPositionId\":" + positionId + ",\"plantZoneId\":" + zoneId
+                                + ",\"exposureSessionId\":\"" + exposureSessionId + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    /** Deja a AI Forecasting siguiendo la sesión, como si hubiera llegado por su inbox. */
+    private void seedForecastingSnapshot(Long worker, String sessionId, String zoneId,
+                                         Long positionId) {
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        forecastingSnapshots.handle(new UpsertExposureSnapshotCommand(
+                "snap-" + sessionId, null, ORG, worker, sessionId, zoneId, positionId,
+                new BigDecimal("1000"), new BigDecimal("12000"),
+                now.minus(4, ChronoUnit.HOURS), now.plus(4, ChronoUnit.HOURS), now));
     }
 
     @Test

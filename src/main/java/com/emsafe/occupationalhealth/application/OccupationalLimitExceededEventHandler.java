@@ -43,8 +43,11 @@ public class OccupationalLimitExceededEventHandler {
             return;
         }
 
+        // El tercer parámetro es el methodId, no el limitVersionId: hasta el
+        // 2026-11-12 se pasaba la versión del límite y `dose_method_id` guardaba
+        // un dato que no era el suyo.
         DoseSnapshot dose = DoseSnapshot.of(event.dose(), event.unit(),
-                event.limitVersionId(), event.limit());
+                event.methodId(), event.limit());
 
         MitigationAction action = MitigationAction.propose(organizationId,
                 MitigationType.RELOCATION, MitigationOrigin.LIMIT_EXCEEDED,

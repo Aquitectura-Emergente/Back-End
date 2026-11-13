@@ -82,7 +82,7 @@ public class RegisterRelocationCommandHandler {
 
         EventEnvelope envelope = EventEnvelope.of(organizationId);
         events.publishEvent(new ShiftUpdated(envelope, shift.getExposureSessionId(),
-                saved.getId(), workerId, previousPositionId, toPositionId,
+                saved.getId(), workerId, previousPositionId, toPositionId, toZoneId,
                 effectiveAt, ssoUserId));
         events.publishEvent(new MitigationActionApplied(
                 EventEnvelope.causedBy(organizationId, envelope), saved.getId(),

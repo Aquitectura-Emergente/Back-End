@@ -66,8 +66,12 @@ public class PersonalDosimetryService {
         var limit = limits.saveAndFlush(new OccupationalLimit(organizationId, request.jobPositionId(), version,
                 request.limitIndex(), request.warningRatio(), request.effectiveFrom(), request.reference(),
                 actor.userId(), now()));
+        // positionId, no jobPositionId: en los payloads de evento el nombre es el
+        // del spec §5.6 («previousPositionId, newPositionId»), que es el que ya
+        // usan ShiftUpdated y los inbox de AI Forecasting. La entidad y la columna
+        // siguen siendo jobPositionId; esto es solo el vocabulario de integración.
         emit(organizationId, "OccupationalLimitConfigured",
-                Map.of("limitVersionId", limit.getId(), "version", version, "jobPositionId", limit.getJobPositionId(),
+                Map.of("limitVersionId", limit.getId(), "version", version, "positionId", limit.getJobPositionId(),
                         "changedBy", actor.userId(), "methodId", ExposureIndex.METHOD), now());
         return DosimetryResources.Limit.from(limit);
     }
@@ -110,9 +114,17 @@ public class PersonalDosimetryService {
                 .orElseThrow(() -> DosimetryRuleException.invalid("No effective limit exists for the job position"));
         var session = sessions.saveAndFlush(ExposureSession.open(device.organizationId(), request.workerId(),
                 request.deviceId(), limit, startedAt));
+        // positionId, accumulatedIndex y limitIndex se añadieron el 2026-11-12:
+        // el inbox exposure-snapshot de AI Forecasting los exige para crear el
+        // modelo de lectura de la sesión, y sin ellos la apertura no se podía
+        // entregar. Los tres ya estaban a mano aquí. Mismos nombres que
+        // ExposureSessionClosed, salvo positionId, que allí no viaja.
         emit(session.getOrganizationId(), "ExposureSessionOpened",
                 Map.of("sessionId", session.getId(), "workerId", session.getWorkerId(),
                         "deviceId", session.getDeviceId(), "limitVersionId", session.getLimitVersionId(),
+                        "positionId", session.getJobPositionId(),
+                        "accumulatedIndex", session.getAccumulatedIndex(),
+                        "limitIndex", session.getLimitIndex(),
                         "startedAt", session.getStartedAt(), "openedBy", actor.userId()), now);
         return view(session);
     }
@@ -181,11 +193,23 @@ public class PersonalDosimetryService {
         if (session.getState() == ExposureSession.State.CLOSED) return view(session);
         session.finalizeSession(now(), request != null && request.deliveryConfirmed());
         sessions.saveAndFlush(session);
+        // Map.ofEntries y no Map.of: son once pares y Map.of admite diez.
+        // unit, limitIndex, methodId y finalizedAt se añadieron el 2026-11-12
+        // porque el inbox de Occupational Health los exige para dejar constancia
+        // en un reporte de cumplimiento, y sin ellos ese hecho no se podía
+        // entregar. Son los mismos nombres que ya usa OccupationalLimitExceeded.
         emit(session.getOrganizationId(), "ExposureSessionClosed",
-                Map.of("sessionId", id, "workerId", session.getWorkerId(),
-                        "accumulatedIndex", session.getAccumulatedIndex(), "limitVersionId", session.getLimitVersionId(),
-                        "coveragePercentage", session.coverage(now()), "coverageComplete", session.coverageComplete(),
-                        "finalizedBy", actor.userId()), now());
+                Map.ofEntries(Map.entry("sessionId", id),
+                        Map.entry("workerId", session.getWorkerId()),
+                        Map.entry("accumulatedIndex", session.getAccumulatedIndex()),
+                        Map.entry("limitIndex", session.getLimitIndex()),
+                        Map.entry("limitVersionId", session.getLimitVersionId()),
+                        Map.entry("coveragePercentage", session.coverage(now())),
+                        Map.entry("coverageComplete", session.coverageComplete()),
+                        Map.entry("finalizedBy", actor.userId()),
+                        Map.entry("finalizedAt", now()),
+                        Map.entry("methodId", ExposureIndex.METHOD),
+                        Map.entry("unit", ExposureIndex.UNIT)), now());
         return view(session);
     }
 

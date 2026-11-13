@@ -17,5 +17,19 @@ public record CreateAlarmRequest(
         /** Selected client ids when recipientType = specific. */
         List<Long> clientIds,
 
-        String sensor
+        String sensor,
+
+        // ─── Alerta de operario (V23) ─────────────────────────────────────────
+        // Los tres son opcionales: sin ellos se crea una alarma de cliente, que
+        // es lo único que este contexto sabía hacer hasta V22. Con `workerId`
+        // pasa a ser una alerta de operario, acusable y escalable.
+
+        /** Empresa del operario. Exigido por el sobre del evento de evidencia. */
+        Long organizationId,
+
+        /** Operario al que concierne. Su presencia hace a la alerta "de operario". */
+        Long workerId,
+
+        /** Jornada de exposición de la que proviene, si proviene de una. */
+        String sessionId
 ) {}

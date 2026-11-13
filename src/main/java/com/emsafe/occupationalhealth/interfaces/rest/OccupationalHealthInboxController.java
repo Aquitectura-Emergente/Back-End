@@ -17,18 +17,30 @@ import org.springframework.web.bind.annotation.*;
  *
  * ── AÑADIDO QUE EL INFORME NO TIENE, Y ES PROVISIONAL ─────────────────────────
  * §5.6.2 define cuatro consumers que reciben estos hechos desde Azure Service
- * Bus. Esta solución no tiene broker, y los contextos que los publican
- * —Personal Dosimetry y AI Forecasting— todavía no existen. Sin alguna forma de
- * inyectarlos, dos de las tres puertas de entrada del contexto (LIMIT_EXCEEDED y
- * AI_SUGGESTION) serían código inalcanzable: nadie podría abrir ni demostrar una
- * rotación.
- *
- * Este controller es ese sustituto. Publica el evento en proceso y los handlers
- * reaccionan exactamente como reaccionarían ante el broker, inbox incluido.
+ * Bus. Esta solución no tiene broker, así que este controller los inyecta a
+ * mano: publica el evento en proceso y los handlers reaccionan exactamente como
+ * reaccionarían ante el broker, inbox incluido.
  *
  * Es ADMIN-only a propósito: no es una capacidad del negocio. Cuando exista
  * broker o los módulos publiquen en proceso, **este controller se borra** y no
  * hay que tocar ningún handler.
+ *
+ * ── QUÉ SIGUE NECESITÁNDOLO Y QUÉ NO (2026-11) ───────────────────────────────
+ * Cuando se escribió esto, los contextos que publican estos hechos no existían.
+ * Ya existen, y el estado es desigual:
+ *
+ * - {@code rotation-suggested} YA TIENE PRODUCTOR REAL: AI Forecasting lo
+ *   escribe en su outbox y {@code ForecastingOutboxRelay} lo entrega. Este
+ *   endpoint queda solo para pruebas y demos.
+ * - {@code occupational-limit-exceeded} y {@code exposure-session-closed}
+ *   siguen entrando SOLO por aquí. Personal Dosimetry los emite a su propio
+ *   outbox ({@code personal_dosimetry_outbox}) y nadie lo drena, porque su
+ *   payload no encaja con estos DTO: manda {@code accumulatedIndex} y
+ *   {@code limitIndex} donde aquí se esperan {@code dose} y {@code limit}, y no
+ *   manda {@code segmentId}, {@code snapshotId} ni {@code methodId}. Decidir esa
+ *   equivalencia es cosa del dueño de ese contexto: de ella dependen las cifras
+ *   de los reportes de cumplimiento.
+ * - {@code alert-evidence} tampoco tiene productor.
  */
 @RestController
 @RequestMapping("/api/v1/occupational-health/inbox")
@@ -44,7 +56,7 @@ public class OccupationalHealthInboxController {
         events.publishEvent(new OccupationalLimitExceeded(
                 EventEnvelope.of(in.organizationId()), in.sessionId(), in.segmentId(),
                 in.workerId(), in.dose(), in.unit(), in.limit(), in.limitVersionId(),
-                in.capturedAt(), in.detectedAt()));
+                in.methodId(), in.capturedAt(), in.detectedAt()));
         return accepted("OccupationalLimitExceeded");
     }
 

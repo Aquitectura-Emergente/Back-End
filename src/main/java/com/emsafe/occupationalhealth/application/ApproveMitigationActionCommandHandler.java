@@ -143,7 +143,8 @@ public class ApproveMitigationActionCommandHandler {
         events.publishEvent(new ShiftUpdated(
                 EventEnvelope.of(action.getOrganizationId()),
                 shift.getExposureSessionId(), action.getId(), worker.getWorkerId(),
-                previousPositionId, worker.getToPositionId(), effectiveAt,
+                previousPositionId, worker.getToPositionId(), worker.getToZoneId(),
+                effectiveAt,
                 action.getDecision() != null ? action.getDecision().getDecidedBy() : null));
     }
 
