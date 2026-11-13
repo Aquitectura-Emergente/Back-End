@@ -13,7 +13,7 @@ import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.domain.model.UserStatus;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
 import com.emsafe.devicemanagement.domain.model.Device;
-import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceJpaRepository;
 import com.emsafe.occupationalhealth.domain.model.MitigationAction;
 import com.emsafe.occupationalhealth.domain.model.MitigationAuditEntry;
 import com.emsafe.occupationalhealth.domain.model.MitigationOrigin;
@@ -100,7 +100,7 @@ class OccupationalHealthApiIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired UserRepository users;
-    @Autowired DeviceRepository devices;
+    @Autowired DeviceJpaRepository devices;
     @Autowired RadiationReadingRepository readings;
     @Autowired MitigationAuditEntryRepository auditLog;
     @Autowired MitigationActionRepository actions;

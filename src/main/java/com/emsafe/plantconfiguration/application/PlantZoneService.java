@@ -1,6 +1,6 @@
 package com.emsafe.plantconfiguration.application;
 
-import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.application.DeviceCatalog;
 import com.emsafe.plantconfiguration.domain.model.PlantConfigurationRuleException;
 import com.emsafe.plantconfiguration.domain.model.PlantEdge;
 import com.emsafe.plantconfiguration.domain.model.PlantZone;
@@ -32,7 +32,7 @@ public class PlantZoneService {
     private final PlantZoneRepository zones;
     private final PlantEdgeRepository edges;
     private final JobPositionRepository positions;
-    private final DeviceRepository devices;
+    private final DeviceCatalog devices;
 
     @Transactional(readOnly = true)
     public List<PlantZoneDto> listFor(Long organizationId) {
@@ -93,7 +93,7 @@ public class PlantZoneService {
                     "This zone still has " + positionCount
                             + " job position(s). Remove or move them first");
         }
-        long deviceCount = devices.countByPlantZoneId(id);
+        long deviceCount = devices.countInZone(id);
         if (deviceCount > 0) {
             throw new PlantConfigurationRuleException(
                     "This zone still has " + deviceCount
@@ -119,7 +119,7 @@ public class PlantZoneService {
                 zone.getCreatedAt(),
                 edge.map(PlantEdge::getSerialNumber).orElse(null),
                 edge.map(PlantEdge::getStatus).orElse(null),
-                devices.countByPlantZoneId(zone.getId()),
+                devices.countInZone(zone.getId()),
                 positions.countByPlantZoneId(zone.getId()));
     }
 }

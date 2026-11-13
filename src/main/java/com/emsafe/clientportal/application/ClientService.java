@@ -4,7 +4,7 @@ import com.emsafe.clientportal.interfaces.rest.dto.*;
 import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
 import com.emsafe.devicemanagement.domain.model.Device;
-import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.application.DeviceCatalog;
 import com.emsafe.radiationmonitoring.domain.services.RadiationLevel;
 import com.emsafe.shared.exception.BadRequestException;
 import com.emsafe.shared.exception.ResourceNotFoundException;
@@ -37,7 +37,7 @@ import java.util.Map;
 public class ClientService {
 
     private final UserRepository userRepository;
-    private final DeviceRepository deviceRepository;
+    private final DeviceCatalog deviceCatalog;
     private final RadiationReadingRepository radiationReadingRepository;
     private final PasswordEncoder passwordEncoder;
 
@@ -92,14 +92,14 @@ public class ClientService {
 
     @Transactional(readOnly = true)
     public List<ClientDeviceDto> getDevices(Long clientId) {
-        return deviceRepository.findByClient_IdOrderByIdAsc(clientId).stream()
+        return deviceCatalog.listForClient(clientId).stream()
                 .map(d -> toDeviceDto(d, radiationReadingRepository.findByDeviceIdWithDevice(d.getId())))
                 .toList();
     }
 
     @Transactional(readOnly = true)
     public ClientDeviceDto getDeviceDetail(Long clientId, Long deviceId) {
-        Device d = deviceRepository.findByIdAndClient_Id(deviceId, clientId)
+        Device d = deviceCatalog.findForClient(deviceId, clientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
         return toDeviceDto(d, radiationReadingRepository.findByDeviceIdWithDevice(deviceId));
     }
@@ -107,7 +107,7 @@ public class ClientService {
     @Transactional(readOnly = true)
     public List<ClientReadingDto> getDeviceReadings(Long clientId, Long deviceId) {
         // Ownership check: throws if the device doesn't belong to this client
-        deviceRepository.findByIdAndClient_Id(deviceId, clientId)
+        deviceCatalog.findForClient(deviceId, clientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
         return radiationReadingRepository.findByDeviceIdWithDevice(deviceId).stream()
                 .map(this::toReadingDto)
@@ -121,10 +121,7 @@ public class ClientService {
      */
     @Transactional
     public ClientDeviceDto setDesiredPlug(Long clientId, Long deviceId, String plug) {
-        Device d = deviceRepository.findByIdAndClient_Id(deviceId, clientId)
-                .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
-        d.requestPlug(plug);
-        deviceRepository.save(d);
+        Device d = deviceCatalog.requestDesiredPlug(deviceId, clientId, plug);
         return toDeviceDto(d, radiationReadingRepository.findByDeviceIdWithDevice(deviceId));
     }
 
@@ -141,7 +138,7 @@ public class ClientService {
 
     @Transactional(readOnly = true)
     public ClientDashboardDto getDashboard(Long clientId) {
-        List<Device> devices = deviceRepository.findByClient_IdOrderByIdAsc(clientId);
+        List<Device> devices = deviceCatalog.listForClient(clientId);
         List<RadiationReading> readings = radiationReadingRepository.findByClientIdWithDevice(clientId);
 
         List<ClientDeviceDto> deviceDtos = devices.stream()

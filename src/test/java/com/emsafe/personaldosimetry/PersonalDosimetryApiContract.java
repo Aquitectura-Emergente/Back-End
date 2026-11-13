@@ -3,7 +3,7 @@ package com.emsafe.personaldosimetry;
 import com.emsafe.iam.domain.model.*;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
 import com.emsafe.devicemanagement.domain.model.Device;
-import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.infrastructure.persistence.DeviceJpaRepository;
 import com.emsafe.personaldosimetry.application.*;
 import com.emsafe.personaldosimetry.domain.model.*;
 import com.emsafe.personaldosimetry.infrastructure.persistence.*;
@@ -48,7 +48,7 @@ abstract class PersonalDosimetryApiContract {
     @Autowired ObjectMapper json;
     @Autowired PersonalDosimetryService service;
     @Autowired UserRepository users;
-    @Autowired DeviceRepository devices;
+    @Autowired DeviceJpaRepository devices;
     @Autowired DosimetryMembershipRepository memberships;
     @Autowired OccupationalLimitRepository limits;
     @Autowired ExposureSessionRepository sessions;

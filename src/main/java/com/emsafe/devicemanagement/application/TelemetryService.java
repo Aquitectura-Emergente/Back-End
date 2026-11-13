@@ -3,7 +3,7 @@ package com.emsafe.devicemanagement.application;
 import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
 import com.emsafe.devicemanagement.domain.model.Device;
-import com.emsafe.devicemanagement.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.domain.repositories.DeviceRepository;
 import com.emsafe.shared.exception.BadRequestException;
 import com.emsafe.shared.exception.ResourceNotFoundException;
 import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingDto;
@@ -49,7 +49,7 @@ public class TelemetryService {
         }
 
         String serial = req.getSerialNumber().trim();
-        Device device = deviceRepository.findBySerialNumber(serial);
+        Device device = deviceRepository.findBySerial(serial).orElse(null);
         if (device == null) {
             // Sensor aún no registrado: lo autocreamos para no perder la lectura.
             device = deviceRepository.save(Device.unregistered(serial));
@@ -122,7 +122,7 @@ public class TelemetryService {
         if (serialNumber == null || serialNumber.isBlank()) {
             throw new BadRequestException("serialNumber is required");
         }
-        Device device = deviceRepository.findBySerialNumber(serialNumber.trim());
+        Device device = deviceRepository.findBySerial(serialNumber.trim()).orElse(null);
         if (device == null) {
             throw new ResourceNotFoundException("Device", 0L);
         }
