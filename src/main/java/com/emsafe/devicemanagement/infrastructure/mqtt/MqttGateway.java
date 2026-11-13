@@ -5,8 +5,12 @@ import java.util.function.BiConsumer;
 
 /** Conexión MQTT del backend. Las pruebas usan un doble. */
 public interface MqttGateway {
-    /** @return true si el broker confirmó (QoS 1) */
-    boolean publish(String topic, byte[] payload, int qos, boolean retained);
+    /**
+     * Publica y, con QoS 1, espera la confirmación del broker.
+     *
+     * @throws MqttPublishException si no hay conexión, el broker no confirma o falla
+     */
+    void publish(String topic, byte[] payload, int qos, boolean retained);
 
     void subscribe(List<String> topicFilters, int qos);
 

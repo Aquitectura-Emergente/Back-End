@@ -90,16 +90,23 @@ public class PahoMqttGateway implements MqttGateway, SmartLifecycle {
     }
 
     @Override
-    public boolean publish(String topic, byte[] payload, int qos, boolean retained) {
+    public void publish(String topic, byte[] payload, int qos, boolean retained) {
         MqttAsyncClient c = client;
-        if (c == null || !c.isConnected()) return false;
+        if (c == null || !c.isConnected()) {
+            throw new MqttPublishException("not connected to broker " + config.serverUri());
+        }
         try {
             IMqttToken token = c.publish(topic, payload, qos, retained);
             token.waitForCompletion(config.getPublishTimeoutMs());
-            return token.isComplete() && token.getException() == null;
+            if (!token.isComplete()) {
+                throw new MqttPublishException("no confirmation from the broker within "
+                        + config.getPublishTimeoutMs() + " ms");
+            }
+            if (token.getException() != null) {
+                throw new MqttPublishException(token.getException().getMessage(), token.getException());
+            }
         } catch (MqttException e) {
-            log.warn("Could not publish to {}: {}", topic, e.getMessage());
-            return false;
+            throw new MqttPublishException(e.getMessage() + " (reason code " + e.getReasonCode() + ")", e);
         }
     }
 

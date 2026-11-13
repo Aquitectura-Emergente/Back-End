@@ -1,7 +1,9 @@
 package com.emsafe.devicemanagement.infrastructure.outbox;
 
 import com.emsafe.devicemanagement.application.ports.DeviceConfigPublisher;
+import com.emsafe.devicemanagement.application.ports.PublicationFailedException;
 import com.emsafe.devicemanagement.domain.events.DeviceConfigChanged;
+import com.emsafe.devicemanagement.domain.events.DeviceDomainEvent;
 import com.emsafe.devicemanagement.domain.events.DeviceInactivityDetected;
 import com.emsafe.devicemanagement.domain.model.ConfigDefinedBy;
 import com.emsafe.devicemanagement.infrastructure.persistence.DeviceManagementEvent;
@@ -11,7 +13,10 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
@@ -26,13 +31,15 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+@ExtendWith(OutputCaptureExtension.class)
 class DeviceManagementOutboxRelayTest {
     static final Instant T0 = Instant.parse("2026-11-12T14:00:00Z");
     final ObjectMapper json = JsonMapper.builder().addModule(new JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS).build();
 
     @Test
-    void aFailedConfigHoldsBackLaterConfigsButNotOtherEvents() throws Exception {
+    void aFailedConfigHoldsBackLaterConfigsButNotOtherEventsAndIsLoggedWithItsId(CapturedOutput output)
+            throws Exception {
         List<DeviceManagementEvent> rows = List.of(
                 row(config(2)), row(new DeviceInactivityDetected("D", 7L, T0, T0)), row(config(3)));
         DeviceManagementEventJpaRepository repo = mock(DeviceManagementEventJpaRepository.class);
@@ -41,9 +48,8 @@ class DeviceManagementOutboxRelayTest {
         List<Integer> published = new ArrayList<>();
         boolean[] brokerUp = {false};
         DeviceConfigPublisher mqtt = c -> {
-            if (!brokerUp[0]) return false;
+            if (!brokerUp[0]) throw new PublicationFailedException("not connected to broker tcp://localhost:1883", null);
             published.add(c.configVersion());
-            return true;
         };
         List<Object> inProcess = new ArrayList<>();
         ApplicationEventPublisher app = inProcess::add;
@@ -53,6 +59,9 @@ class DeviceManagementOutboxRelayTest {
         assertThat(rows.get(0).getPublishedAt()).isNull();
         assertThat(rows.get(1).getPublishedAt()).isNotNull();
         assertThat(rows.get(2).getPublishedAt()).isNull();
+        assertThat(output).contains("WARN").contains("Outbox event " + rows.get(0).getId())
+                .contains("v2 for EMSafe-DOS-01").contains("not connected to broker tcp://localhost:1883")
+                .contains("1 later config event(s) held back");
 
         brokerUp[0] = true;
         relay.drainOnce();
@@ -65,8 +74,11 @@ class DeviceManagementOutboxRelayTest {
                 ConfigDefinedBy.SSO_RESPONSIBLE, 1000, 300, T0.plusSeconds(version));
     }
 
-    private DeviceManagementEvent row(com.emsafe.devicemanagement.domain.events.DeviceDomainEvent e) throws Exception {
-        return new DeviceManagementEvent(e.eventType(), e.organizationId(), json.writeValueAsString(e), e.occurredAt());
+    private DeviceManagementEvent row(DeviceDomainEvent e) throws Exception {
+        DeviceManagementEvent row = new DeviceManagementEvent(e.eventType(), e.organizationId(),
+                json.writeValueAsString(e), e.occurredAt());
+        org.springframework.test.util.ReflectionTestUtils.setField(row, "id", java.util.UUID.randomUUID().toString());
+        return row;
     }
 
     @SuppressWarnings("unchecked")

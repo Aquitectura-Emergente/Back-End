@@ -2,6 +2,7 @@ package com.emsafe.devicemanagement.infrastructure.mqtt;
 
 import com.emsafe.devicemanagement.application.PlugCommandService.PlugCommandAccepted;
 import com.emsafe.devicemanagement.application.ports.PlugCommandPublisher;
+import com.emsafe.devicemanagement.application.ports.PublicationFailedException;
 import com.emsafe.devicemanagement.domain.repositories.PlugCommandRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -34,9 +35,11 @@ public class PlugCommandDispatcher {
         TransactionTemplate tx = new TransactionTemplate(transactions);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         tx.executeWithoutResult(status -> commands.findByCommandId(accepted.commandId()).ifPresent(command -> {
-            if (!publisher.publish(command)) {
-                log.warn("Plug command {} for {} could not be published", command.getCommandId(),
-                        command.getPlugSerial());
+            try {
+                publisher.publish(command);
+            } catch (PublicationFailedException e) {
+                log.warn("Plug command {} for {} not published: {}", command.getCommandId(),
+                        command.getPlugSerial(), e.getMessage());
                 command.markSendFailed(clock.instant());
                 commands.save(command);
             }

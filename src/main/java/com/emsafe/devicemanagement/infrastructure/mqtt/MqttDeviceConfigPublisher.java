@@ -1,6 +1,7 @@
 package com.emsafe.devicemanagement.infrastructure.mqtt;
 
 import com.emsafe.devicemanagement.application.ports.DeviceConfigPublisher;
+import com.emsafe.devicemanagement.application.ports.PublicationFailedException;
 import com.emsafe.devicemanagement.domain.events.DeviceConfigChanged;
 import com.emsafe.devicemanagement.infrastructure.mqtt.contract.MqttContract;
 import lombok.RequiredArgsConstructor;
@@ -16,10 +17,13 @@ public class MqttDeviceConfigPublisher implements DeviceConfigPublisher {
     private final MqttGateway mqtt;
 
     @Override
-    public boolean publish(DeviceConfigChanged config) {
-        boolean ok = mqtt.publish(MqttContract.configTopic(config.deviceId()),
-                MqttContract.write(MqttContract.configMessage(config)), MqttContract.QOS, true);
-        if (ok) log.info("Published config v{} for {}", config.configVersion(), config.deviceId());
-        return ok;
+    public void publish(DeviceConfigChanged config) {
+        String topic = MqttContract.configTopic(config.deviceId());
+        try {
+            mqtt.publish(topic, MqttContract.write(MqttContract.configMessage(config)), MqttContract.QOS, true);
+        } catch (MqttPublishException e) {
+            throw new PublicationFailedException(topic + ": " + e.getMessage(), e);
+        }
+        log.info("Published config v{} for {}", config.configVersion(), config.deviceId());
     }
 }

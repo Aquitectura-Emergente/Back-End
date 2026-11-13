@@ -18,10 +18,9 @@ public class RecordingMqttGateway implements MqttGateway {
     private BiConsumer<String, byte[]> handler = (t, p) -> { };
 
     @Override
-    public boolean publish(String topic, byte[] payload, int qos, boolean retained) {
-        if (!accept) return false;
+    public void publish(String topic, byte[] payload, int qos, boolean retained) {
+        if (!accept) throw new MqttPublishException("not connected to broker (test double)");
         published.add(new Published(topic, payload, qos, retained));
-        return true;
     }
 
     @Override
