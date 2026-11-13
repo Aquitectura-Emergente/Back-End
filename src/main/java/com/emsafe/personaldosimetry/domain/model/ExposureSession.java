@@ -57,6 +57,9 @@ public class ExposureSession {
     private boolean warningRaised;
     @Column(nullable = false)
     private boolean limitExceeded;
+    /** Lecturas saturadas: la jornada queda marcada como afectada por lecturas fuera de rango. */
+    @Column(name = "out_of_range_readings", nullable = false)
+    private int outOfRangeReadings;
 
     public static ExposureSession open(Long organizationId, Long workerId, Long deviceId,
                                        OccupationalLimit limit, Instant startedAt) {
@@ -90,6 +93,10 @@ public class ExposureSession {
                 || (endedAt != null && to.isAfter(endedAt))) {
             throw DosimetryRuleException.invalid("Capture interval is outside the session or in the future");
         }
+    }
+
+    public void recordOutOfRangeReading() {
+        outOfRangeReadings++;
     }
 
     public Crossings apply(BigDecimal contribution, long micros, Instant capturedTo) {

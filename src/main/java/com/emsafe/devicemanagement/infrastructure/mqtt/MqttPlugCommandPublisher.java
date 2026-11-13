@@ -1,0 +1,25 @@
+package com.emsafe.devicemanagement.infrastructure.mqtt;
+
+import com.emsafe.devicemanagement.application.ports.PlugCommandPublisher;
+import com.emsafe.devicemanagement.application.ports.PublicationFailedException;
+import com.emsafe.devicemanagement.domain.model.PlugCommand;
+import com.emsafe.devicemanagement.infrastructure.mqtt.contract.MqttContract;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+/** Publica la orden en {@code iot/{plugId}/command}, QoS 1 y sin retain. */
+@Component
+@RequiredArgsConstructor
+public class MqttPlugCommandPublisher implements PlugCommandPublisher {
+    private final MqttGateway mqtt;
+
+    @Override
+    public void publish(PlugCommand command) {
+        String topic = MqttContract.commandTopic(command.getPlugSerial());
+        try {
+            mqtt.publish(topic, MqttContract.write(MqttContract.commandMessage(command)), MqttContract.QOS, false);
+        } catch (MqttPublishException e) {
+            throw new PublicationFailedException(topic + ": " + e.getMessage(), e);
+        }
+    }
+}

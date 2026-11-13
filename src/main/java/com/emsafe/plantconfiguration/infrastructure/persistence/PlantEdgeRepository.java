@@ -16,5 +16,7 @@ public interface PlantEdgeRepository extends JpaRepository<PlantEdge, Long> {
 
     boolean existsBySerialNumber(String serialNumber);
 
+    Optional<PlantEdge> findBySerialNumber(String serialNumber);
+
     boolean existsBySerialNumberAndIdNot(String serialNumber, Long id);
 }

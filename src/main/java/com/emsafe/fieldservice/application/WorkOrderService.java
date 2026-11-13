@@ -2,8 +2,8 @@ package com.emsafe.fieldservice.application;
 
 import com.emsafe.alerts.domain.model.Alert;
 import com.emsafe.alerts.infrastructure.persistence.AlertRepository;
-import com.emsafe.iottelemetry.application.DeviceProvisioningService;
-import com.emsafe.iottelemetry.interfaces.rest.dto.DeviceDto;
+import com.emsafe.devicemanagement.application.DeviceProvisioningService;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceDto;
 import com.emsafe.fieldservice.domain.model.History;
 import com.emsafe.fieldservice.infrastructure.persistence.HistoryRepository;
 import com.emsafe.shared.exception.BadRequestException;

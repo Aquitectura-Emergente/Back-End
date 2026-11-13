@@ -1,6 +1,6 @@
 package com.emsafe.fieldservice.interfaces.rest.dto;
 
-import com.emsafe.iottelemetry.interfaces.rest.dto.DeviceDto;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceDto;
 import com.emsafe.fieldservice.domain.model.WorkOrder;
 import com.emsafe.fieldservice.domain.model.WorkOrderEvidence;
 

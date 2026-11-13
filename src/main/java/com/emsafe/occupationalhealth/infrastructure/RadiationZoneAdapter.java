@@ -1,7 +1,7 @@
 package com.emsafe.occupationalhealth.infrastructure;
 
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.application.DeviceCatalog;
 import com.emsafe.occupationalhealth.domain.model.ReportPeriod;
 import com.emsafe.occupationalhealth.domain.model.ZoneRiskLevel;
 import com.emsafe.occupationalhealth.domain.model.ZoneStatistics;
@@ -45,7 +45,7 @@ import java.util.stream.Collectors;
 public class RadiationZoneAdapter implements ZoneExposurePort {
 
     private final RadiationReadingRepository readingRepository;
-    private final DeviceRepository deviceRepository;
+    private final DeviceCatalog deviceCatalog;
     private final PlantZoneRepository zoneRepository;
 
     /**
@@ -79,7 +79,7 @@ public class RadiationZoneAdapter implements ZoneExposurePort {
             return ZoneRiskLevel.RISK;
         }
 
-        List<Device> zoneDevices = deviceRepository.findByPlantZoneIdOrderByIdAsc(plantZoneId);
+        List<Device> zoneDevices = deviceCatalog.listInZone(plantZoneId);
         if (zoneDevices.isEmpty()) {
             log.debug("Zone {} has no devices; classified as RISK", plantZoneId);
             return ZoneRiskLevel.RISK;

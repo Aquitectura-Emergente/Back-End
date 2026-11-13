@@ -1,6 +1,7 @@
 package com.emsafe;
 
 import com.emsafe.aiforecasting.infrastructure.ForecastingOutboxRelay;
+import com.emsafe.devicemanagement.infrastructure.outbox.DeviceManagementOutboxRelay;
 import com.emsafe.personaldosimetry.infrastructure.DosimetryOutboxRelay;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,6 +55,7 @@ class OutboxRelaySchedulingTest {
     void theTestProfileSwitchesOffExactlyThePropertiesTheRelaysRead() {
         assertRelayIsSwitchedOffInTests(DosimetryOutboxRelay.class);
         assertRelayIsSwitchedOffInTests(ForecastingOutboxRelay.class);
+        assertRelayIsSwitchedOffInTests(DeviceManagementOutboxRelay.class);
     }
 
     private void assertRelayIsSwitchedOffInTests(Class<?> relay) {
@@ -73,7 +75,8 @@ class OutboxRelaySchedulingTest {
     @Test
     @DisplayName("el intervalo es configurable y trae un default, para no exigir configuracion en prod")
     void theDelayIsAPlaceholderWithADefault() throws Exception {
-        for (Class<?> relay : new Class<?>[]{DosimetryOutboxRelay.class, ForecastingOutboxRelay.class}) {
+        for (Class<?> relay : new Class<?>[]{DosimetryOutboxRelay.class, ForecastingOutboxRelay.class,
+                DeviceManagementOutboxRelay.class}) {
             Scheduled scheduled = relay.getMethod("drainScheduled").getAnnotation(Scheduled.class);
             assertNotNull(scheduled, relay.getSimpleName() + ".drainScheduled está programado");
             String delay = scheduled.fixedDelayString();
@@ -106,5 +109,12 @@ class OutboxRelaySchedulingTest {
 
         assertDoesNotThrow(dosimetry::drainScheduled);
         assertDoesNotThrow(forecasting::drainScheduled);
+        var deviceManagement = new DeviceManagementOutboxRelay(null, null, null, null, null) {
+            @Override
+            public int drainOnce() {
+                throw new IllegalStateException("la base de datos no responde");
+            }
+        };
+        assertDoesNotThrow(deviceManagement::drainScheduled);
     }
 }
