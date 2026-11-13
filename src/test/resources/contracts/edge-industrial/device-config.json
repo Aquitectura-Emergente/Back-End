@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "deviceId": "EMSafe-DOS-01",
+  "configVersion": 3,
+  "alertThresholdUT": 300.0,
+  "definedBy": "SSO_RESPONSIBLE",
+  "updatedAt": "2026-11-12T14:00:00Z"
+}

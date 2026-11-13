@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "1.0",
+  "deviceId": "EMSafe-DOS-01",
+  "edgeNodeId": "EDGE-HOGAR-01",
+  "connectivity": "ONLINE",
+  "changedAt": "2026-11-12T15:00:00Z",
+  "firmwareVersion": null,
+  "batteryLevel": null
+}

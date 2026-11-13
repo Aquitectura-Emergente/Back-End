@@ -87,6 +87,8 @@ public class SecurityConfig {
                         // PlantConfigurationAccessPolicy; aquí solo se cierra la puerta.
                         .requestMatchers("/api/v1/plant-config/**")
                                 .hasAnyRole("SSO_RESPONSIBLE", "WORKER", "ADMIN")
+                        // Device Management: el detalle de permisos lo decide el caso de uso
+                        .requestMatchers("/api/v1/device-management/**").authenticated()
                         .requestMatchers("/api/v1/**").permitAll()
                         // WebSocket handshake (STOMP) — real-time telemetry push (no JWT, like /api/v1).
                         .requestMatchers("/ws/**").permitAll()
