@@ -540,7 +540,11 @@ class OccupationalHealthApiIntegrationTest {
         assertEquals("98.50% (incompleta)", record.getCoverage());
     }
 
-    /** Los tres tipos sin destino no se marcan: marcarlos perdería el hecho. */
+    /**
+     * Los tipos sin destino no se marcan: marcarlos perdería el hecho. Quedan dos
+     * —{@code PersonalReadingArrivedLate} y {@code ExposureSessionCloseRequested}—;
+     * {@code ExposureWarningRaised} ya se entrega a AI Forecasting.
+     */
     @Test
     @DisplayName("un hecho sin destino se queda pendiente y no atasca a los demas")
     void relayLeavesEventsWithoutDestinationPending() throws Exception {

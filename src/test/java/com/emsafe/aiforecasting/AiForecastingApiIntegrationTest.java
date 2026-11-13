@@ -1,6 +1,9 @@
 package com.emsafe.aiforecasting;
 
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
+import com.emsafe.personaldosimetry.domain.model.DosimetryEvent;
+import com.emsafe.personaldosimetry.infrastructure.DosimetryOutboxRelay;
+import com.emsafe.personaldosimetry.infrastructure.persistence.DosimetryEventRepository;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -8,6 +11,7 @@ import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
@@ -18,7 +22,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -63,6 +72,10 @@ class AiForecastingApiIntegrationTest {
 
     @Autowired private MockMvc mvc;
     @Autowired private UserRepository users;
+    @Autowired private DosimetryEventRepository dosimetryEvents;
+    @Autowired private ApplicationEventPublisher eventPublisher;
+    /** El del contexto, el mismo que serializa los payloads del outbox en producción. */
+    @Autowired private ObjectMapper springJson;
 
     private final String run = UUID.randomUUID().toString().substring(0, 8);
     /** workerId únicos por test: en datos reales son ids de IAM y no se repiten entre organizaciones. */
@@ -334,6 +347,116 @@ class AiForecastingApiIntegrationTest {
         String after = getAs(adminToken, "/outbox", "size", "200").andReturn().getResponse().getContentAsString();
         assertThat(JsonPath.<List<Object>>read(after, "$.data.content[?(@.aggregateId == '" + id + "')]"))
                 .hasSize(eventsBefore);
+    }
+
+    // ─── El relay de Personal Dosimetry ──────────────────────────────────────
+
+    /**
+     * El cable que faltaba: dosimetría abre una jornada y avisa de la exposición,
+     * y este contexto tiene que evaluar <b>sin que nadie haga el POST a mano</b>.
+     *
+     * <p>Se comprueba contra las mismas cifras que el escenario por HTTP
+     * ({@code seedScenario}): si el mapeo del relay difiere, la proyección sale
+     * distinta de 14:40.</p>
+     *
+     * <p>Y se fija lo que <em>no</em> trae este camino: sin zona no hay candidatos
+     * de rotación, porque dosimetría no sabe en qué zona de planta está el
+     * operario. Esa zona llega después por el {@code ShiftUpdated} de Occupational
+     * Health. Los dos cables se complementan; ninguno basta solo.</p>
+     */
+    @Test
+    void relayDeliversSessionOpenedThenWarningAndTheAssessmentAppears() throws Exception {
+        long org = randomOrg();
+        String session = "S-relay-" + run;
+        Instant openedAt = Instant.parse("2026-11-10T08:00:00Z");
+
+        saveDosimetryEvent(org, DosimetryOutboxRelay.SESSION_OPENED,
+                sessionOpenedPayload(session, w101, "0"), openedAt);
+        saveDosimetryEvent(org, DosimetryOutboxRelay.WARNING_RAISED,
+                warningPayload(session, w101, "7200"), Instant.parse("2026-11-10T12:00:00Z"));
+
+        assertThat(dosimetryRelay().drainOnce()).isEqualTo(2);
+
+        getAs(adminToken, "/assessments", "sessionId", session)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].criticality").value("HIGH"))
+                .andExpect(jsonPath("$.data.content[0].projection.currentIndex").value(7200.0))
+                .andExpect(jsonPath("$.data.content[0].projection.estimatedExceedanceAt")
+                        .value("2026-11-10T14:40:00Z"))
+                // El puesto sí viaja en la apertura; la zona no, así que no hay a
+                // quién rotar y la recomendación cae en reprogramar la tarea.
+                .andExpect(jsonPath("$.data.content[0].recommendation.type").value("RESCHEDULE_TASK"))
+                .andExpect(jsonPath("$.data.content[0].recommendation.targetWorkerId").doesNotExist());
+
+        assertThat(dosimetryEvents.findAll().stream()
+                .filter(e -> e.getOrganizationId().equals(org))
+                .allMatch(e -> e.getPublishedAt() != null)).isTrue();
+    }
+
+    /**
+     * Una sesión se puede abrir con fecha de inicio retroactiva, y entonces una
+     * lectura de dentro del turno tiene un {@code occurredAt} anterior al de la
+     * apertura y se adelanta en la cola. El aviso llega sin snapshot, da 409 y se
+     * queda pendiente; la pasada siguiente ya lo encuentra creado.
+     *
+     * <p>Esto es lo que compra el outbox y lo que no tiene el puente de
+     * {@code ShiftUpdated}: ahí un fallo se pierde, aquí se reintenta.</p>
+     */
+    @Test
+    void warningThatArrivesBeforeTheSnapshotIsRetriedOnTheNextPass() throws Exception {
+        long org = randomOrg();
+        String session = "S-order-" + run;
+
+        String warningId = saveDosimetryEvent(org, DosimetryOutboxRelay.WARNING_RAISED,
+                warningPayload(session, w300, "7200"), Instant.parse("2026-11-10T09:00:00Z")).getId();
+        // La apertura se emite después de la lectura: alta retroactiva.
+        saveDosimetryEvent(org, DosimetryOutboxRelay.SESSION_OPENED,
+                sessionOpenedPayload(session, w300, "0"), Instant.parse("2026-11-10T10:00:00Z"));
+
+        dosimetryRelay().drainOnce();
+
+        assertThat(dosimetryEvents.findById(warningId).orElseThrow().getPublishedAt())
+                .as("el aviso adelantado no se da por entregado").isNull();
+        getAs(adminToken, "/assessments", "sessionId", session)
+                .andExpect(jsonPath("$.data.totalElements").value(0));
+
+        dosimetryRelay().drainOnce();
+
+        assertThat(dosimetryEvents.findById(warningId).orElseThrow().getPublishedAt())
+                .as("la pasada siguiente lo entrega").isNotNull();
+        getAs(adminToken, "/assessments", "sessionId", session)
+                .andExpect(jsonPath("$.data.totalElements").value(1));
+    }
+
+    /** El bean está apagado en el perfil de test: un @Scheduled dispararía entre asserts. */
+    private DosimetryOutboxRelay dosimetryRelay() {
+        return new DosimetryOutboxRelay(dosimetryEvents, eventPublisher, springJson, Clock.systemUTC());
+    }
+
+    /** Los mismos campos que escribe PersonalDosimetryService al abrir la jornada. */
+    private Map<String, Object> sessionOpenedPayload(String session, long worker, String index) {
+        return Map.of("sessionId", session, "workerId", worker, "deviceId", 1L,
+                "limitVersionId", 7L, "positionId", 10L,
+                "accumulatedIndex", new BigDecimal(index), "limitIndex", new BigDecimal("12000"),
+                "startedAt", Instant.parse("2026-11-10T08:00:00Z"), "openedBy", 1L);
+    }
+
+    private Map<String, Object> warningPayload(String session, long worker, String index) {
+        return Map.of("sessionId", session, "workerId", worker, "readingId", 1L,
+                "accumulatedIndex", new BigDecimal(index), "limitIndex", new BigDecimal("12000"),
+                "limitVersionId", 7L, "capturedAt", Instant.parse("2026-11-10T12:00:00Z"),
+                "detectedAt", Instant.parse("2026-11-10T12:00:00Z"),
+                "methodId", METHOD, "unit", "uT*s");
+    }
+
+    private DosimetryEvent saveDosimetryEvent(long org, String type, Map<String, Object> fields,
+                                              Instant occurredAt) throws Exception {
+        Map<String, Object> payload = new LinkedHashMap<>(fields);
+        payload.put("schemaVersion", 1);
+        payload.put("organizationId", org);
+        return dosimetryEvents.save(new DosimetryEvent(org, type,
+                springJson.writeValueAsString(payload), occurredAt.truncatedTo(ChronoUnit.MICROS)));
     }
 
     // ─── Errores ─────────────────────────────────────────────────────────────

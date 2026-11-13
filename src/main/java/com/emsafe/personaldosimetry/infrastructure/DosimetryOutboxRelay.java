@@ -1,5 +1,7 @@
 package com.emsafe.personaldosimetry.infrastructure;
 
+import com.emsafe.aiforecasting.application.commands.ExposureWarningRaisedCommand;
+import com.emsafe.aiforecasting.application.commands.UpsertExposureSnapshotCommand;
 import com.emsafe.occupationalhealth.application.events.EventEnvelope;
 import com.emsafe.occupationalhealth.application.events.inbound.ExposureSessionClosed;
 import com.emsafe.occupationalhealth.application.events.inbound.OccupationalLimitExceeded;
@@ -33,21 +35,35 @@ import java.util.Map;
  * que una excedencia no abría ninguna medida de mitigación salvo que alguien
  * hiciera el POST a mano al inbox.</p>
  *
- * <h2>Entrega dos de los cinco tipos</h2>
+ * <h2>Entrega cuatro de los seis tipos, a dos contextos distintos</h2>
  *
- * <p>{@code OccupationalLimitExceeded} abre una medida de mitigación y
- * {@code ExposureSessionClosed} alimenta la proyección que exportan los reportes
- * de cumplimiento. Los otros tres —{@code ExposureWarningRaised},
- * {@code PersonalReadingArrivedLate} y {@code ExposureSessionCloseRequested}— se
- * quedan <b>pendientes sin marcar</b>.</p>
+ * <p>Hacia Occupational Health, {@code OccupationalLimitExceeded} abre una medida
+ * de mitigación y {@code ExposureSessionClosed} alimenta la proyección que
+ * exportan los reportes de cumplimiento. Hacia AI Forecasting,
+ * {@code ExposureSessionOpened} da de alta el modelo de lectura de la sesión y
+ * {@code ExposureWarningRaised} dispara la evaluación preventiva.</p>
  *
- * <p>Eso último es deliberado y distinto de lo que hace el relay de AI
- * Forecasting con {@code PredictiveRiskDetected}: allí se marca porque nadie lo
- * consumirá nunca, mientras aquí tienen destino previsto —
- * {@code ExposureWarningRaised} encaja con el inbox de AI Forecasting— y
- * marcarlos perdería el hecho. Por eso la consulta filtra por tipo en vez de
- * leer todos los pendientes: si no, los no entregables encabezarían la cola para
- * siempre y taparían a los demás.</p>
+ * <p>Los otros dos —{@code PersonalReadingArrivedLate} y
+ * {@code ExposureSessionCloseRequested}— se quedan <b>pendientes sin marcar</b>.
+ * Es deliberado y distinto de lo que hace el relay de AI Forecasting con
+ * {@code PredictiveRiskDetected}: allí se marca porque nadie lo consumirá nunca,
+ * mientras aquí tienen destino previsto y marcarlos perdería el hecho. Por eso la
+ * consulta filtra por tipo en vez de leer todos los pendientes: si no, los no
+ * entregables encabezarían la cola para siempre y taparían a los demás.</p>
+ *
+ * <h2>La apertura tiene que llegar antes que el aviso</h2>
+ *
+ * <p>El inbox {@code exposure-warning-raised} responde 409 si la sesión no tiene
+ * snapshot, así que {@code ExposureSessionOpened} es su prerrequisito. La consulta
+ * ordena por {@code occurredAt}, que casi siempre basta, pero <b>no siempre</b>:
+ * una sesión se puede abrir con fecha de inicio retroactiva, y entonces una
+ * lectura de dentro del turno tiene un {@code occurredAt} anterior al de la
+ * apertura y se adelanta en la cola.</p>
+ *
+ * <p>No se fuerza el orden porque el reintento ya lo resuelve: el aviso falla con
+ * 409, se queda pendiente y la pasada siguiente lo encuentra con el snapshot ya
+ * creado. Cuesta una pasada, no un hecho perdido. Forzarlo exigiría ordenar por
+ * tipo además de por tiempo, y eso sí rompería el orden causal del resto.</p>
  *
  * <h2>Sobre el mapeo del índice a «dosis»</h2>
  *
@@ -65,8 +81,11 @@ public class DosimetryOutboxRelay {
     /** Los mismos nombres que usa PersonalDosimetryService al emitir. */
     public static final String LIMIT_EXCEEDED = "OccupationalLimitExceeded";
     public static final String SESSION_CLOSED = "ExposureSessionClosed";
+    public static final String SESSION_OPENED = "ExposureSessionOpened";
+    public static final String WARNING_RAISED = "ExposureWarningRaised";
     /** Lo que este relay sabe entregar. El resto se queda pendiente. */
-    static final List<String> DELIVERABLE = List.of(LIMIT_EXCEEDED, SESSION_CLOSED);
+    static final List<String> DELIVERABLE =
+            List.of(LIMIT_EXCEEDED, SESSION_CLOSED, SESSION_OPENED, WARNING_RAISED);
     private static final int BATCH = 50;
     private static final Logger log = LoggerFactory.getLogger(DosimetryOutboxRelay.class);
     private static final TypeReference<Map<String, Object>> PAYLOAD = new TypeReference<>() {
@@ -122,9 +141,12 @@ public class DosimetryOutboxRelay {
 
     private boolean deliver(DosimetryEvent event) {
         try {
-            publisher.publishEvent(SESSION_CLOSED.equals(event.getEventType())
-                    ? toSessionClosed(event)
-                    : toLimitExceeded(event));
+            publisher.publishEvent(switch (event.getEventType()) {
+                case SESSION_CLOSED -> toSessionClosed(event);
+                case SESSION_OPENED -> toSnapshotUpsert(event);
+                case WARNING_RAISED -> toWarningRaised(event);
+                default -> toLimitExceeded(event);
+            });
             return true;
         } catch (RuntimeException e) {
             // Se queda pendiente. El inbox deduplica por eventId, así que el
@@ -213,6 +235,60 @@ public class DosimetryOutboxRelay {
                 dateTime(payload.get("detectedAt")));
     }
 
+    /**
+     * La apertura de jornada da de alta el modelo de lectura de AI Forecasting.
+     *
+     * <p>{@code zoneId} va nulo: dosimetría no sabe en qué zona de planta está el
+     * operario —ese dato es de Occupational Health y llega después por
+     * {@code ShiftUpdated}, que el snapshot conserva al fusionar—. El puesto sí
+     * viaja, porque la sesión lo guarda desde que se eligió el límite.</p>
+     *
+     * <p>{@code capturedAt} se iguala al inicio de la sesión, que es lo que el
+     * propio dominio considera la última captura conocida al abrir
+     * ({@code ExposureSession.open} fija {@code latestCaptureTo = startedAt}). No
+     * se usa el instante de la emisión: con una apertura retroactiva, adelantaría
+     * el reloj del snapshot e ignoraría las lecturas del tramo ya transcurrido,
+     * que son más antiguas y se descartan por ser anteriores.</p>
+     */
+    private UpsertExposureSnapshotCommand toSnapshotUpsert(DosimetryEvent event) {
+        Map<String, Object> payload = read(event);
+        Instant startedAt = instant(payload.get("startedAt"));
+        return new UpsertExposureSnapshotCommand(event.getId(), event.getId(),
+                event.getOrganizationId(),
+                number(payload.get("workerId")),
+                text(payload.get("sessionId")),
+                null,
+                number(payload.get("positionId")),
+                decimal(payload.get("accumulatedIndex")),
+                decimal(payload.get("limitIndex")),
+                startedAt,
+                null,
+                startedAt);
+    }
+
+    /**
+     * El aviso dispara la evaluación preventiva. Es el único de los cuatro cables
+     * sin divergencia de vocabulario: los once campos del comando se llaman igual
+     * que los del payload.
+     *
+     * <p>{@code limitVersionId} viaja como número y no como texto, al contrario
+     * que hacia Occupational Health: aquí el destino lo tipa {@code Long}, y es el
+     * tipo real del id del límite en este contexto.</p>
+     */
+    private ExposureWarningRaisedCommand toWarningRaised(DosimetryEvent event) {
+        Map<String, Object> payload = read(event);
+        return new ExposureWarningRaisedCommand(event.getId(), event.getId(),
+                event.getOrganizationId(),
+                text(payload.get("sessionId")),
+                number(payload.get("workerId")),
+                decimal(payload.get("accumulatedIndex")),
+                decimal(payload.get("limitIndex")),
+                number(payload.get("limitVersionId")),
+                instant(payload.get("capturedAt")),
+                text(payload.get("methodId")),
+                text(payload.get("unit")));
+    }
+
     private Map<String, Object> read(DosimetryEvent event) {
         try {
             return json.readValue(event.getPayload(), PAYLOAD);
@@ -245,6 +321,11 @@ public class DosimetryOutboxRelay {
 
     private LocalDateTime dateTime(Object value) {
         return value == null ? null : utc(json.convertValue(value, Instant.class));
+    }
+
+    /** AI Forecasting trabaja en {@code Instant}; Occupational Health, en local UTC. */
+    private Instant instant(Object value) {
+        return value == null ? null : json.convertValue(value, Instant.class);
     }
 
     private static LocalDateTime utc(Instant instant) {

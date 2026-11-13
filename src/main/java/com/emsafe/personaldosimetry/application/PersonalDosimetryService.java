@@ -66,8 +66,12 @@ public class PersonalDosimetryService {
         var limit = limits.saveAndFlush(new OccupationalLimit(organizationId, request.jobPositionId(), version,
                 request.limitIndex(), request.warningRatio(), request.effectiveFrom(), request.reference(),
                 actor.userId(), now()));
+        // positionId, no jobPositionId: en los payloads de evento el nombre es el
+        // del spec §5.6 («previousPositionId, newPositionId»), que es el que ya
+        // usan ShiftUpdated y los inbox de AI Forecasting. La entidad y la columna
+        // siguen siendo jobPositionId; esto es solo el vocabulario de integración.
         emit(organizationId, "OccupationalLimitConfigured",
-                Map.of("limitVersionId", limit.getId(), "version", version, "jobPositionId", limit.getJobPositionId(),
+                Map.of("limitVersionId", limit.getId(), "version", version, "positionId", limit.getJobPositionId(),
                         "changedBy", actor.userId(), "methodId", ExposureIndex.METHOD), now());
         return DosimetryResources.Limit.from(limit);
     }
@@ -110,9 +114,17 @@ public class PersonalDosimetryService {
                 .orElseThrow(() -> DosimetryRuleException.invalid("No effective limit exists for the job position"));
         var session = sessions.saveAndFlush(ExposureSession.open(device.organizationId(), request.workerId(),
                 request.deviceId(), limit, startedAt));
+        // positionId, accumulatedIndex y limitIndex se añadieron el 2026-11-12:
+        // el inbox exposure-snapshot de AI Forecasting los exige para crear el
+        // modelo de lectura de la sesión, y sin ellos la apertura no se podía
+        // entregar. Los tres ya estaban a mano aquí. Mismos nombres que
+        // ExposureSessionClosed, salvo positionId, que allí no viaja.
         emit(session.getOrganizationId(), "ExposureSessionOpened",
                 Map.of("sessionId", session.getId(), "workerId", session.getWorkerId(),
                         "deviceId", session.getDeviceId(), "limitVersionId", session.getLimitVersionId(),
+                        "positionId", session.getJobPositionId(),
+                        "accumulatedIndex", session.getAccumulatedIndex(),
+                        "limitIndex", session.getLimitIndex(),
                         "startedAt", session.getStartedAt(), "openedBy", actor.userId()), now);
         return view(session);
     }
