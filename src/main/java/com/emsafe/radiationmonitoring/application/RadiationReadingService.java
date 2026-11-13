@@ -57,6 +57,7 @@ public class RadiationReadingService {
                 .latitude(client != null ? client.getLatitude() : null)
                 .longitude(client != null ? client.getLongitude() : null)
                 .device(r.device())
+                .client(client)
                 .build());
         return view(reading, client);
     }
@@ -88,7 +89,7 @@ public class RadiationReadingService {
 
     private static RadiationReadingView view(RadiationReading r, AppUser client) {
         Device d = r.getDevice();
-        AppUser owner = client != null ? client : d != null ? d.getClient() : null;
+        AppUser owner = client != null ? client : r.attributedClient();
         return new RadiationReadingView(r.getId(), r.getSensorId(), d != null ? d.getId() : null,
                 d != null ? d.getName() : null, r.getValue(), r.getLevel(), r.getMessage(), r.getPlug(),
                 r.getLocation(), r.getLatitude(), r.getLongitude(), owner != null ? owner.getId() : null,

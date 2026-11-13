@@ -1,6 +1,9 @@
 package com.emsafe.devicemanagement;
 
 import com.emsafe.clientportal.application.ClientService;
+import com.emsafe.clientportal.interfaces.rest.dto.ClientReadingDto;
+import com.emsafe.devicemanagement.application.TelemetryService;
+import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingDto;
 import com.emsafe.devicemanagement.domain.model.ConnectivityStatus;
 import com.emsafe.devicemanagement.domain.model.Device;
 import com.emsafe.devicemanagement.domain.model.DeviceType;
@@ -92,6 +95,7 @@ class DeviceManagementEndToEndTest {
     @Autowired ExposureSessionRepository sessions;
     @Autowired ClientService clients;
     @Autowired RecordingMqttGateway mqtt;
+    @Autowired TelemetryService telemetry;
 
     @Test
     @Order(1)
@@ -184,6 +188,31 @@ class DeviceManagementEndToEndTest {
                     assertThat(d.plug()).isEqualTo("OFF");
                     assertThat(d.desiredPlug()).isEqualTo("OFF");
                 });
+    }
+
+    /**
+     * El dosímetro es de Quantum pero está prestado al hogar: la lectura del
+     * hogar es del cliente home-demo en el historial REST, igual que en el
+     * WebSocket, y no aparece en el historial de Quantum.
+     */
+    @Test
+    @Order(5)
+    void theHomeReadingOfALentDeviceBelongsToTheHomeClientAndNotToTheDeviceOwner() {
+        AppUser company = users.findByEmail(DeviceManagementDemoSeeder.COMPANY_EMAIL).orElseThrow();
+        AppUser house = users.findByEmail(DeviceManagementDemoSeeder.HOME_EMAIL).orElseThrow();
+        Device dosimeter = devices.findBySerial(DOSIMETER).orElseThrow();
+        Long homeReadingId = Long.valueOf(readings.findByDevice(DOSIMETER, ReadingRouting.HOME_RECORDED, 10)
+                .get(0).getRoutingRef());
+
+        assertThat(clients.getReadings(house.getId())).extracting(ClientReadingDto::id).contains(homeReadingId);
+        assertThat(clients.getReadings(company.getId())).extracting(ClientReadingDto::id)
+                .doesNotContain(homeReadingId);
+        assertThat(clients.getDeviceReadings(company.getId(), dosimeter.getId())).extracting(ClientReadingDto::id)
+                .doesNotContain(homeReadingId);
+
+        ReadingDto published = telemetry.list(DOSIMETER, 50).stream()
+                .filter(r -> homeReadingId.equals(r.getId())).findFirst().orElseThrow();
+        assertThat(published.getClientId()).isEqualTo(house.getId());
     }
 
     private static String withTime(String json, Instant at) {

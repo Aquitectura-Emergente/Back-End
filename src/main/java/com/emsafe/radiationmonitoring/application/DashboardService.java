@@ -130,8 +130,8 @@ public class DashboardService {
 
         // Group readings by client; skip readings not linked to a device with a client
         Map<Long, List<RadiationReading>> byClient = readings.stream()
-                .filter(r -> r.getDevice() != null && r.getDevice().getClient() != null)
-                .collect(Collectors.groupingBy(r -> r.getDevice().getClient().getId()));
+                .filter(r -> r.getDevice() != null && r.attributedClient() != null)
+                .collect(Collectors.groupingBy(r -> r.attributedClient().getId()));
 
         List<ClientRadiationDto> result = new ArrayList<>();
 
@@ -140,7 +140,7 @@ public class DashboardService {
             List<RadiationReading> clientReadings = entry.getValue();
 
             // Get the client entity (same for all readings in this group)
-            var clientUser = clientReadings.get(0).getDevice().getClient();
+            var clientUser = clientReadings.get(0).attributedClient();
 
             // Marker uses the CLIENT'S registered lat/lng (their physical site)
             Double lat = clientUser.getLatitude();
