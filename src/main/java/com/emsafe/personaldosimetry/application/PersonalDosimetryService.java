@@ -148,7 +148,14 @@ public class PersonalDosimetryService {
                         sessionId, PersonalReading.Status.ACCEPTED, candidate.getCapturedTo(), candidate.getCapturedFrom())) {
             throw DosimetryRuleException.conflict("Capture interval overlaps an accepted reading");
         }
+        if (Boolean.TRUE.equals(request.saturated())) {
+            candidate.markSaturated();
+            session.recordOutOfRangeReading();
+        }
         var reading = readings.saveAndFlush(candidate);
+        if (reading.isSaturated() && reading.getStatus() == PersonalReading.Status.LATE) {
+            sessions.saveAndFlush(session);
+        }
         if (reading.getStatus() == PersonalReading.Status.LATE) {
             emit(session.getOrganizationId(), "PersonalReadingArrivedLate",
                     Map.of("sessionId", sessionId, "readingId", reading.getId(),
@@ -168,6 +175,12 @@ public class PersonalDosimetryService {
             if (crossed.exceeded()) emit(session.getOrganizationId(), "OccupationalLimitExceeded", payload, reading.getCapturedTo());
         }
         return new DosimetryResources.Ingestion(DosimetryResources.Reading.from(reading), false, view(session));
+    }
+
+    /** Jornada del dosímetro que cubre la hora de captura, para enrutar lecturas que llegan sin sesión. */
+    @Transactional(readOnly = true)
+    public java.util.Optional<String> sessionCoveringDevice(Long deviceId, Instant at) {
+        return sessions.findSessionIdsCovering(deviceId, at, PageRequest.of(0, 1)).stream().findFirst();
     }
 
     public DosimetryResources.Session requestClose(DosimetryActor actor, String id, CloseSession request) {

@@ -5,8 +5,8 @@ import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.alerts.infrastructure.persistence.AlertRepository;
 import com.emsafe.radiationmonitoring.domain.services.RadiationLevel;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.application.DeviceCatalog;
 import com.emsafe.fieldservice.domain.model.History;
 import com.emsafe.fieldservice.infrastructure.persistence.HistoryRepository;
 import com.emsafe.iam.domain.model.AppUser;
@@ -37,7 +37,7 @@ public class DataInitializer implements CommandLineRunner {
     private final AlertRepository alertRepository;
     private final RadiationReadingRepository radiationReadingRepository;
     private final HistoryRepository historyRepository;
-    private final DeviceRepository deviceRepository;
+    private final DeviceCatalog deviceCatalog;
     private final PasswordEncoder passwordEncoder;
 
     // ─── Sedes de los clientes (una dirección registrada por cliente) ─────────
@@ -301,7 +301,7 @@ public class DataInitializer implements CommandLineRunner {
                         .status("active").serialNumber("GP-MN-002")
                         .installDate(LocalDate.of(2025, 5, 1)).client(pharma).build()
         );
-        deviceRepository.saveAll(devices);
+        deviceCatalog.registerExisting(devices);
         log.info("Seeded {} devices", devices.size());
     }
 
@@ -311,27 +311,27 @@ public class DataInitializer implements CommandLineRunner {
      * One reading per device (sensor), representing the latest measurement.
      */
     private void seedRadiationReadings() {
-        Device qdSn1 = deviceRepository.findBySerialNumber("QD-SN-001");
-        Device qdSn2 = deviceRepository.findBySerialNumber("QD-SN-002");
-        Device qdMn1 = deviceRepository.findBySerialNumber("QD-MN-001");
-        Device qdSn3 = deviceRepository.findBySerialNumber("QD-SN-003");
-        Device qdSn4 = deviceRepository.findBySerialNumber("QD-SN-004");
-        Device qdMn2 = deviceRepository.findBySerialNumber("QD-MN-002");
+        Device qdSn1 = deviceCatalog.findBySerialNumber("QD-SN-001");
+        Device qdSn2 = deviceCatalog.findBySerialNumber("QD-SN-002");
+        Device qdMn1 = deviceCatalog.findBySerialNumber("QD-MN-001");
+        Device qdSn3 = deviceCatalog.findBySerialNumber("QD-SN-003");
+        Device qdSn4 = deviceCatalog.findBySerialNumber("QD-SN-004");
+        Device qdMn2 = deviceCatalog.findBySerialNumber("QD-MN-002");
 
-        Device hmSn1 = deviceRepository.findBySerialNumber("HM-SN-001");
-        Device hmSn2 = deviceRepository.findBySerialNumber("HM-SN-002");
-        Device hmMn1 = deviceRepository.findBySerialNumber("HM-MN-001");
-        Device hmSn3 = deviceRepository.findBySerialNumber("HM-SN-003");
-        Device hmSn4 = deviceRepository.findBySerialNumber("HM-SN-004");
-        Device hmSn5 = deviceRepository.findBySerialNumber("HM-SN-005");
-        Device hmMn2 = deviceRepository.findBySerialNumber("HM-MN-002");
+        Device hmSn1 = deviceCatalog.findBySerialNumber("HM-SN-001");
+        Device hmSn2 = deviceCatalog.findBySerialNumber("HM-SN-002");
+        Device hmMn1 = deviceCatalog.findBySerialNumber("HM-MN-001");
+        Device hmSn3 = deviceCatalog.findBySerialNumber("HM-SN-003");
+        Device hmSn4 = deviceCatalog.findBySerialNumber("HM-SN-004");
+        Device hmSn5 = deviceCatalog.findBySerialNumber("HM-SN-005");
+        Device hmMn2 = deviceCatalog.findBySerialNumber("HM-MN-002");
 
-        Device gpSn1 = deviceRepository.findBySerialNumber("GP-SN-001");
-        Device gpSn2 = deviceRepository.findBySerialNumber("GP-SN-002");
-        Device gpMn1 = deviceRepository.findBySerialNumber("GP-MN-001");
-        Device gpSn3 = deviceRepository.findBySerialNumber("GP-SN-003");
-        Device gpSn4 = deviceRepository.findBySerialNumber("GP-SN-004");
-        Device gpMn2 = deviceRepository.findBySerialNumber("GP-MN-002");
+        Device gpSn1 = deviceCatalog.findBySerialNumber("GP-SN-001");
+        Device gpSn2 = deviceCatalog.findBySerialNumber("GP-SN-002");
+        Device gpMn1 = deviceCatalog.findBySerialNumber("GP-MN-001");
+        Device gpSn3 = deviceCatalog.findBySerialNumber("GP-SN-003");
+        Device gpSn4 = deviceCatalog.findBySerialNumber("GP-SN-004");
+        Device gpMn2 = deviceCatalog.findBySerialNumber("GP-MN-002");
 
         List<RadiationReading> readings = List.of(
                 // ── Quantum Dynamics Lab — all at QD lat/lng, zone = room inside lab ──
@@ -510,7 +510,7 @@ public class DataInitializer implements CommandLineRunner {
         int sensorIndex = 0;
 
         for (SensorProfile p : profiles) {
-            Device device = deviceRepository.findBySerialNumber(p.serial());
+            Device device = deviceCatalog.findBySerialNumber(p.serial());
             if (device == null) continue;
             // Desfase por sensor: el edge no reporta los 19 al mismo minuto.
             int minuteOffset = (sensorIndex++ * 7) % 60;

@@ -4,8 +4,8 @@ import com.emsafe.iam.domain.model.AppUser;
 import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.domain.model.UserStatus;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.application.DeviceCatalog;
 import com.emsafe.occupationalhealth.domain.model.*;
 import com.emsafe.occupationalhealth.infrastructure.persistence.AlertEvidenceRecordRepository;
 import com.emsafe.occupationalhealth.infrastructure.persistence.ClosedSessionRecordRepository;
@@ -72,7 +72,7 @@ public class OccupationalHealthDataSeeder implements CommandLineRunner {
     private static final BigDecimal LIMIT = new BigDecimal("800");
 
     private final UserRepository users;
-    private final DeviceRepository devices;
+    private final DeviceCatalog devices;
     private final WorkerShiftRepository shifts;
     private final ClosedSessionRecordRepository closedSessions;
     private final AlertEvidenceRecordRepository alertEvidence;
@@ -198,8 +198,7 @@ public class OccupationalHealthDataSeeder implements CommandLineRunner {
             for (int d = 0; d < 2 && deviceCursor < available.size(); d++, deviceCursor++) {
                 Device device = available.get(deviceCursor);
                 if (!zone.getId().equals(device.getPlantZoneId())) {
-                    device.setPlantZoneId(zone.getId());
-                    devices.save(device);
+                    devices.assignToZone(device.getId(), zone.getId());
                 }
             }
         }

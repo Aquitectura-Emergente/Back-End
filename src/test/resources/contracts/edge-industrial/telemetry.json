@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "messageId": "6f1c2a9e-8d2b-4c7e-9a51-2f0b7c3d4e10",
+  "organizationId": "org-demo",
+  "edgeNodeId": "EDGE-PLANTA-01",
+  "deviceId": "EMSafe-DOS-01",
+  "deviceType": "PERSONAL_DOSIMETER",
+  "publishedAt": "2026-11-12T15:04:05Z",
+  "readings": [
+    {
+      "sequence": 1234,
+      "capturedAt": "2026-11-12T15:04:04Z",
+      "capturedAtSource": "DEVICE_CLOCK",
+      "receivedAt": "2026-11-12T15:04:04Z",
+      "magneticFluxDensityUT": 219.5,
+      "origin": "REALTIME",
+      "quality": "VALID"
+    }
+  ]
+}

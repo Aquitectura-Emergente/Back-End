@@ -11,6 +11,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 /**
@@ -58,6 +59,16 @@ public class PlantEdge {
     @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    /**
+     * Conectividad informada por el propio Edge (ONLINE / OFFLINE). Es aparte de
+     * {@code status}, que es la activación administrativa que decide el SSO.
+     */
+    @Column(length = 10)
+    private String connectivity;
+
+    @Column(name = "connectivity_changed_at")
+    private Instant connectivityChangedAt;
+
     public static PlantEdge declare(Long plantZoneId, String serialNumber) {
         if (plantZoneId == null) {
             throw new PlantConfigurationRuleException("An edge requires a plant zone");
@@ -80,6 +91,16 @@ public class PlantEdge {
 
     public void deactivate() {
         this.status = EdgeStatus.INACTIVE;
+    }
+
+    /** Se ignora un estado más viejo que el vigente. */
+    public boolean recordConnectivity(boolean online, Instant at) {
+        if (at == null || (connectivityChangedAt != null && at.isBefore(connectivityChangedAt))) return false;
+        String next = online ? "ONLINE" : "OFFLINE";
+        boolean changed = !next.equals(connectivity);
+        connectivity = next;
+        connectivityChangedAt = at;
+        return changed;
     }
 
     public boolean isActive() {

@@ -39,6 +39,9 @@ public class PersonalReading {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     private Status status;
+    /** El sensor estaba saturado: el campo fue de al menos {@code fieldMicrotesla}. */
+    @Column(nullable = false)
+    private boolean saturated;
 
     public PersonalReading(ExposureSession session, Long deviceId, String bootId, long sequence,
                            BigDecimal fieldMicrotesla, Instant from, Instant to, Instant receivedAt) {
@@ -60,6 +63,10 @@ public class PersonalReading {
         this.capturedTo = to;
         this.receivedAt = receivedAt;
         this.status = session.getState() == ExposureSession.State.CLOSED ? Status.LATE : Status.ACCEPTED;
+    }
+
+    public void markSaturated() {
+        this.saturated = true;
     }
 
     public boolean sameCapture(PersonalReading other) {

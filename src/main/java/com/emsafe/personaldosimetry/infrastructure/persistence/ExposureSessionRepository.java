@@ -23,6 +23,15 @@ public interface ExposureSessionRepository extends JpaRepository<ExposureSession
                                      @Param("startedAt") Instant startedAt);
 
     Optional<ExposureSession> findFirstByWorkerIdOrderByStartedAtDesc(Long workerId);
+
+    /** Jornadas del dosímetro que cubren un instante (la más reciente primero). */
+    @Query("""
+            select s.id from ExposureSession s
+            where s.deviceId = :deviceId and s.startedAt <= :at and (s.endedAt is null or s.endedAt > :at)
+            order by s.startedAt desc
+            """)
+    java.util.List<String> findSessionIdsCovering(@Param("deviceId") Long deviceId, @Param("at") Instant at,
+                                                  org.springframework.data.domain.Pageable page);
     Page<ExposureSession> findByOrganizationIdAndWorkerIdOrderByStartedAtDesc(
             Long organizationId, Long workerId, Pageable pageable);
 }

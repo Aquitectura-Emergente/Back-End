@@ -3,8 +3,9 @@ package com.emsafe.clientportal.application;
 import com.emsafe.clientportal.interfaces.rest.dto.*;
 import com.emsafe.radiationmonitoring.domain.model.RadiationReading;
 import com.emsafe.radiationmonitoring.infrastructure.persistence.RadiationReadingRepository;
-import com.emsafe.iottelemetry.domain.model.Device;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.devicemanagement.application.DeviceCatalog;
+import com.emsafe.devicemanagement.application.PlugCommandService;
 import com.emsafe.radiationmonitoring.domain.services.RadiationLevel;
 import com.emsafe.shared.exception.BadRequestException;
 import com.emsafe.shared.exception.ResourceNotFoundException;
@@ -37,7 +38,8 @@ import java.util.Map;
 public class ClientService {
 
     private final UserRepository userRepository;
-    private final DeviceRepository deviceRepository;
+    private final DeviceCatalog deviceCatalog;
+    private final PlugCommandService plugCommands;
     private final RadiationReadingRepository radiationReadingRepository;
     private final PasswordEncoder passwordEncoder;
 
@@ -92,14 +94,14 @@ public class ClientService {
 
     @Transactional(readOnly = true)
     public List<ClientDeviceDto> getDevices(Long clientId) {
-        return deviceRepository.findByClient_IdOrderByIdAsc(clientId).stream()
+        return deviceCatalog.listForClient(clientId).stream()
                 .map(d -> toDeviceDto(d, radiationReadingRepository.findByDeviceIdWithDevice(d.getId())))
                 .toList();
     }
 
     @Transactional(readOnly = true)
     public ClientDeviceDto getDeviceDetail(Long clientId, Long deviceId) {
-        Device d = deviceRepository.findByIdAndClient_Id(deviceId, clientId)
+        Device d = deviceCatalog.findForClient(deviceId, clientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
         return toDeviceDto(d, radiationReadingRepository.findByDeviceIdWithDevice(deviceId));
     }
@@ -107,7 +109,7 @@ public class ClientService {
     @Transactional(readOnly = true)
     public List<ClientReadingDto> getDeviceReadings(Long clientId, Long deviceId) {
         // Ownership check: throws if the device doesn't belong to this client
-        deviceRepository.findByIdAndClient_Id(deviceId, clientId)
+        deviceCatalog.findForClient(deviceId, clientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
         return radiationReadingRepository.findByDeviceIdWithDevice(deviceId).stream()
                 .map(this::toReadingDto)
@@ -115,16 +117,15 @@ public class ClientService {
     }
 
     /**
-     * Stores the relay state the user wants (ON | OFF) for one of THEIR devices.
-     * The edge polls GET /api/v1/devices/{serial}/plug to pick up the order and
-     * drive the physical relay (mobile → backend → edge → device).
+     * Order from the user (ON | OFF) for one of THEIR smart plugs. Device
+     * Management publishes it to the home edge over MQTT; the real state comes
+     * back on iot/{plugId}/state. Until then desiredPlug shows the pending order.
      */
     @Transactional
     public ClientDeviceDto setDesiredPlug(Long clientId, Long deviceId, String plug) {
-        Device d = deviceRepository.findByIdAndClient_Id(deviceId, clientId)
+        plugCommands.requestForClient(clientId, deviceId, plug);
+        Device d = deviceCatalog.findForClient(deviceId, clientId)
                 .orElseThrow(() -> new ResourceNotFoundException("Device", deviceId));
-        d.requestPlug(plug);
-        deviceRepository.save(d);
         return toDeviceDto(d, radiationReadingRepository.findByDeviceIdWithDevice(deviceId));
     }
 
@@ -141,7 +142,7 @@ public class ClientService {
 
     @Transactional(readOnly = true)
     public ClientDashboardDto getDashboard(Long clientId) {
-        List<Device> devices = deviceRepository.findByClient_IdOrderByIdAsc(clientId);
+        List<Device> devices = deviceCatalog.listForClient(clientId);
         List<RadiationReading> readings = radiationReadingRepository.findByClientIdWithDevice(clientId);
 
         List<ClientDeviceDto> deviceDtos = devices.stream()
@@ -297,8 +298,8 @@ public class ClientService {
                 latest != null ? latest.level() : null,
                 latest != null && latest.getReadingDate() != null ? latest.getReadingDate().toString() : null,
                 deviceReadings.size(),
-                latest != null ? latest.getPlug() : null,
-                d.getDesiredPlug()
+                deviceCatalog.plugStateOf(d, latest != null ? latest.getPlug() : null),
+                deviceCatalog.desiredPlugOf(d)
         );
     }
 

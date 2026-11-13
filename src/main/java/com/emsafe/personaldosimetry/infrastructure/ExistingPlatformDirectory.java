@@ -3,7 +3,7 @@ package com.emsafe.personaldosimetry.infrastructure;
 import com.emsafe.iam.domain.model.AppUser;
 import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
-import com.emsafe.iottelemetry.infrastructure.persistence.DeviceRepository;
+import com.emsafe.devicemanagement.application.DeviceCatalog;
 import com.emsafe.personaldosimetry.application.DosimetryDirectory;
 import com.emsafe.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class ExistingPlatformDirectory implements DosimetryDirectory {
     private final UserRepository users;
-    private final DeviceRepository devices;
+    private final DeviceCatalog devices;
 
     public User userByEmail(String email) {
         return snapshot(users.findByEmail(email)
@@ -25,7 +25,7 @@ public class ExistingPlatformDirectory implements DosimetryDirectory {
     }
 
     public Device deviceById(Long id) {
-        var d = devices.findByIdWithClient(id).orElseThrow(() -> new ResourceNotFoundException("Device", id));
+        var d = devices.findWithClient(id).orElseThrow(() -> new ResourceNotFoundException("Device", id));
         return new Device(d.getId(), d.getClient() == null ? null : d.getClient().getId(), d.isActive());
     }
 

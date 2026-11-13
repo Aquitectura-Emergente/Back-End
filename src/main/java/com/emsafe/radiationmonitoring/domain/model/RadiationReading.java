@@ -1,6 +1,7 @@
 package com.emsafe.radiationmonitoring.domain.model;
 
-import com.emsafe.iottelemetry.domain.model.Device;
+import com.emsafe.devicemanagement.domain.model.Device;
+import com.emsafe.iam.domain.model.AppUser;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -58,6 +59,15 @@ public class RadiationReading {
     @JoinColumn(name = "device_id")
     private Device device;
 
+    /**
+     * Cliente al que pertenece la lectura: el dueño del Edge que la envió. No
+     * siempre es el dueño del dispositivo (un sensor puede estar prestado a un
+     * hogar). Null en lecturas anteriores, que se atribuyen al dueño del dispositivo.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "client_id")
+    private AppUser client;
+
     // ─── Comportamiento del agregado ──────────────────────────────────────────
 
     /**
@@ -68,6 +78,11 @@ public class RadiationReading {
      * de llamar al clasificador, que es justo como se cuelan las
      * reclasificaciones accidentales en el backend.
      */
+    public AppUser attributedClient() {
+        if (client != null) return client;
+        return device != null ? device.getClient() : null;
+    }
+
     public String level() {
         return com.emsafe.radiationmonitoring.domain.services.RadiationLevel.of(this);
     }
