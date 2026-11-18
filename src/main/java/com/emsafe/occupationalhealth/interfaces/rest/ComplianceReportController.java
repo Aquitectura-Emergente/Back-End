@@ -10,6 +10,7 @@ import com.emsafe.occupationalhealth.domain.model.ReportScope;
 import com.emsafe.occupationalhealth.domain.services.ReportRenderer;
 import com.emsafe.occupationalhealth.infrastructure.persistence.ComplianceReportRepository;
 import com.emsafe.occupationalhealth.interfaces.rest.dto.ComplianceReportResource;
+import com.emsafe.occupationalhealth.interfaces.rest.dto.ComplianceReportSummaryResource;
 import com.emsafe.occupationalhealth.interfaces.rest.dto.GenerateComplianceReportRequest;
 import com.emsafe.shared.dto.ApiResponse;
 import com.emsafe.shared.exception.ResourceNotFoundException;
@@ -21,6 +22,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * REST de los reportes de cumplimiento (informe §5.6.2).
@@ -60,6 +63,27 @@ public class ComplianceReportController {
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(
                 "Compliance report generated",
                 ComplianceReportResource.from(load(reportId, organizationId))));
+    }
+
+    /**
+     * Los reportes ya emitidos de la organización, el más reciente primero, o
+     * solo los de un operario si se pasa workerId. Mismo patrón de filtro
+     * opcional que la bandeja de mitigación.
+     *
+     * Devuelve el resumen y no el reporte entero: ver
+     * {@link ComplianceReportSummaryResource}.
+     */
+    @GetMapping
+    public ResponseEntity<ApiResponse<List<ComplianceReportSummaryResource>>> list(
+            @RequestParam(required = false) Long workerId,
+            Authentication auth) {
+        AppUser user = accessPolicy.assertCanRead(auth);
+        Long organizationId = accessPolicy.organizationOf(user);
+
+        return ResponseEntity.ok(ApiResponse.ok(
+                reportRepository.findByWorker(organizationId, workerId).stream()
+                        .map(ComplianceReportSummaryResource::from)
+                        .toList()));
     }
 
     @GetMapping("/{id}")
