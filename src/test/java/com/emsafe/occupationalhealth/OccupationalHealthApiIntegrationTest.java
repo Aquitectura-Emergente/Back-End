@@ -868,6 +868,38 @@ class OccupationalHealthApiIntegrationTest {
 
     @Test
     @WithMockUser(username = SSO_EMAIL, roles = {"SSO_RESPONSIBLE"})
+    @DisplayName("el listado devuelve resúmenes de los reportes emitidos y se filtra por operario")
+    void listReturnsIssuedReportSummaries() throws Exception {
+        seedClosedSession("sess-report-list", "600");
+        String body = "{\"scope\":\"WORKER\",\"workerId\":" + workerId
+                + ",\"from\":\"" + LocalDate.now().minusDays(1)
+                + "\",\"to\":\"" + LocalDate.now().plusDays(1) + "\"}";
+        mvc.perform(post(API + "/compliance-reports")
+                .contentType(MediaType.APPLICATION_JSON).content(body));
+        mvc.perform(post(API + "/compliance-reports")
+                .contentType(MediaType.APPLICATION_JSON).content(body));
+
+        // El resumen NO lleva entradas ni digest a propósito: calcularlos obliga
+        // a recorrer las entradas de cada reporte, que son lazy. Se obtienen al
+        // abrir uno por id.
+        mvc.perform(get(API + "/compliance-reports"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].scope").value("WORKER"))
+                .andExpect(jsonPath("$.data[0].periodFrom").exists())
+                .andExpect(jsonPath("$.data[0].entries").doesNotExist())
+                .andExpect(jsonPath("$.data[0].digestValue").doesNotExist());
+
+        mvc.perform(get(API + "/compliance-reports").param("workerId", String.valueOf(workerId)))
+                .andExpect(jsonPath("$.data.length()").value(2));
+
+        // Otro operario no comparte historial, aunque la organización sea la misma.
+        mvc.perform(get(API + "/compliance-reports").param("workerId", String.valueOf(workerId + 999)))
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    @WithMockUser(username = SSO_EMAIL, roles = {"SSO_RESPONSIBLE"})
     @DisplayName("exportar devuelve un PDF y queda auditado")
     void exportReturnsAPdfAndIsAudited() throws Exception {
         seedClosedSession("sess-report-3", "600");
