@@ -127,7 +127,13 @@ public class RadiationZoneAdapter implements ZoneExposurePort {
             return List.of();
         }
 
-        Map<Long, List<RadiationReading>> byZone = readingRepository.findAll().stream()
+        // La base filtra por zona y por ventana (antes era un findAll() de toda la
+        // tabla de lecturas). El filtro de fecha se repite aquí con timestamp()
+        // para que el borde de la ventana sea exactamente el mismo de siempre.
+        Map<Long, List<RadiationReading>> byZone = readingRepository
+                .findInPlantZonesBetween(organizationZones, from, to,
+                        from.toLocalDate(), to.toLocalDate())
+                .stream()
                 .filter(r -> r.getDevice() != null && r.getValue() != null)
                 .filter(r -> r.getDevice().getPlantZoneId() != null)
                 .filter(r -> organizationZones.contains(r.getDevice().getPlantZoneId()))

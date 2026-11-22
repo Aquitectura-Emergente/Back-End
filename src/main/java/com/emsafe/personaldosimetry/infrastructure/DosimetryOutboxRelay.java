@@ -4,6 +4,7 @@ import com.emsafe.aiforecasting.application.commands.ExposureWarningRaisedComman
 import com.emsafe.aiforecasting.application.commands.UpsertExposureSnapshotCommand;
 import com.emsafe.occupationalhealth.application.events.EventEnvelope;
 import com.emsafe.occupationalhealth.application.events.inbound.ExposureSessionClosed;
+import com.emsafe.occupationalhealth.application.events.inbound.ExposureWarningRaised;
 import com.emsafe.occupationalhealth.application.events.inbound.OccupationalLimitExceeded;
 import com.emsafe.personaldosimetry.domain.model.DosimetryEvent;
 import com.emsafe.personaldosimetry.infrastructure.persistence.DosimetryEventRepository;
@@ -42,6 +43,14 @@ import java.util.Map;
  * exportan los reportes de cumplimiento. Hacia AI Forecasting,
  * {@code ExposureSessionOpened} da de alta el modelo de lectura de la sesión y
  * {@code ExposureWarningRaised} dispara la evaluación preventiva.</p>
+ *
+ * <p>Desde el 2026-11-22 {@code ExposureWarningRaised} va <b>a los dos</b>: a AI
+ * Forecasting como antes y, además, a Occupational Health, que con él manda el
+ * aviso preventivo al operario. Primero se entrega a Occupational Health, para
+ * que un 409 de AI (snapshot todavía sin crear) no retrase el aviso. Si AI falla,
+ * el evento se queda pendiente y en la pasada siguiente se vuelve a entregar a
+ * los dos: Occupational Health lo descarta por su inbox (deduplica por
+ * {@code eventId}).</p>
  *
  * <p>Los otros dos —{@code PersonalReadingArrivedLate} y
  * {@code ExposureSessionCloseRequested}— se quedan <b>pendientes sin marcar</b>.
@@ -144,7 +153,10 @@ public class DosimetryOutboxRelay {
             publisher.publishEvent(switch (event.getEventType()) {
                 case SESSION_CLOSED -> toSessionClosed(event);
                 case SESSION_OPENED -> toSnapshotUpsert(event);
-                case WARNING_RAISED -> toWarningRaised(event);
+                case WARNING_RAISED -> {
+                    publisher.publishEvent(toOccupationalHealthWarning(event));
+                    yield toWarningRaised(event);
+                }
                 default -> toLimitExceeded(event);
             });
             return true;
@@ -287,6 +299,25 @@ public class DosimetryOutboxRelay {
                 instant(payload.get("capturedAt")),
                 text(payload.get("methodId")),
                 text(payload.get("unit")));
+    }
+
+    /**
+     * El mismo aviso, en el vocabulario de Occupational Health. Los campos son
+     * los de {@link #toLimitExceeded}, salvo {@code segmentId}, que este hecho no
+     * tiene.
+     */
+    private ExposureWarningRaised toOccupationalHealthWarning(DosimetryEvent event) {
+        Map<String, Object> payload = read(event);
+        return new ExposureWarningRaised(envelopeOf(event, payload),
+                text(payload.get("sessionId")),
+                number(payload.get("workerId")),
+                decimal(payload.get("accumulatedIndex")),
+                text(payload.get("unit")),
+                decimal(payload.get("limitIndex")),
+                text(payload.get("limitVersionId")),
+                text(payload.get("methodId")),
+                dateTime(payload.get("capturedAt")),
+                dateTime(payload.get("detectedAt")));
     }
 
     private Map<String, Object> read(DosimetryEvent event) {

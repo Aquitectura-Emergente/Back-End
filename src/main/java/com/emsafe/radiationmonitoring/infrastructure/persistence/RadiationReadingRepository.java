@@ -39,6 +39,26 @@ public interface RadiationReadingRepository extends JpaRepository<RadiationReadi
             + " ORDER BY r.recordedAt DESC, r.id DESC")
     List<RadiationReading> findByDeviceIdWithDevice(@Param("deviceId") Long deviceId);
 
+    /**
+     * Lecturas con valor de los sensores de un conjunto de zonas de planta dentro
+     * de una ventana. Reemplaza al {@code findAll()} con el que Occupational
+     * Health armaba sus estadísticas por zona (2026-11-22): aquel cargaba la
+     * tabla entera en memoria y filtraba en Java.
+     *
+     * <p>La ventana se aplica sobre {@code recordedAt} y, para las lecturas
+     * antiguas que no lo tienen, sobre {@code readingDate}: es el mismo criterio
+     * que {@link RadiationReading#timestamp()}.</p>
+     */
+    @Query("SELECT r FROM RadiationReading r JOIN FETCH r.device d"
+            + " WHERE d.plantZoneId IN :zoneIds AND r.value IS NOT NULL"
+            + " AND ((r.recordedAt IS NOT NULL AND r.recordedAt BETWEEN :from AND :to)"
+            + "   OR (r.recordedAt IS NULL AND r.readingDate BETWEEN :fromDate AND :toDate))")
+    List<RadiationReading> findInPlantZonesBetween(@Param("zoneIds") java.util.Collection<Long> zoneIds,
+                                                   @Param("from") java.time.LocalDateTime from,
+                                                   @Param("to") java.time.LocalDateTime to,
+                                                   @Param("fromDate") java.time.LocalDate fromDate,
+                                                   @Param("toDate") java.time.LocalDate toDate);
+
     // ─── Telemetry (edge ingestion + web/mobile consumption) ──────────────────
     /** Lecturas más recientes (de cualquier sensor), con device + cliente. */
     @Query("SELECT r FROM RadiationReading r LEFT JOIN FETCH r.device d LEFT JOIN FETCH d.client LEFT JOIN FETCH r.client"

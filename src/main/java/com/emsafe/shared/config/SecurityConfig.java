@@ -107,6 +107,11 @@ public class SecurityConfig {
                                 .hasAnyRole("WORKER", "ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/alarms/*/escalate")
                                 .hasAnyRole("SSO_RESPONSIBLE", "ADMIN")
+                        // Listados de alertas de operario (2026-11-22): el operario ve
+                        // las suyas (app) y el SSO las de su organización (portal).
+                        .requestMatchers(HttpMethod.GET, "/api/alarms/mine").hasRole("WORKER")
+                        .requestMatchers(HttpMethod.GET, "/api/alarms/organization")
+                                .hasRole("SSO_RESPONSIBLE")
                         // Profile endpoints — own account (UserController.assertSelfOrAdmin limita a uno mismo)
                         .requestMatchers(HttpMethod.GET,   "/api/users/profile")
                         .hasAnyRole("TECHNICIAN", "ADMIN", "WORKER", "SSO_RESPONSIBLE")
