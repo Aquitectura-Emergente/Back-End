@@ -127,7 +127,7 @@ class DeviceManagementEndToEndTest {
     @Order(2)
     void theIndustrialEdgeExampleLandsInTheDemoSession() {
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
-        router.route("iot/" + DOSIMETER + "/telemetry", bytes(withTime(industrial("telemetry"), now.minusSeconds(2))));
+        router.route("iot/" + DOSIMETER + "/telemetry", bytes(withTime(industrial("telemetry"), now.minusSeconds(31))));
         String saturated = withTime(industrial("telemetry"), now.minusSeconds(1))
                 .replace("\"sequence\": 1234", "\"sequence\": 1235")
                 .replace("\"quality\": \"VALID\"", "\"quality\": \"SATURATED\"");

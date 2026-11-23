@@ -37,9 +37,11 @@ public class PersonalDosimetrySessionAdapter implements DosimetrySessionGateway 
         TransactionTemplate tx = new TransactionTemplate(transactions);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         try {
-            DosimetryResources.Ingestion result = tx.execute(status -> dosimetry.ingest(DosimetryActor.system(),
-                    sessionId, new IngestReading(r.deviceId(), r.bootId(), r.sequence(), r.fieldMicrotesla(), UNIT,
-                            r.capturedFrom(), r.capturedTo(), r.saturated())));
+            DosimetryResources.Ingestion result = tx.execute(status -> {
+                Instant from = withinSession(sessionId, r.capturedFrom());
+                return dosimetry.ingest(DosimetryActor.system(), sessionId, new IngestReading(r.deviceId(),
+                        r.bootId(), r.sequence(), r.fieldMicrotesla(), UNIT, from, r.capturedTo(), r.saturated()));
+            });
             if (result == null) return new DosimetryResult(DosimetryResult.Status.REJECTED, null, "no result");
             return new DosimetryResult(result.duplicate() ? DosimetryResult.Status.DUPLICATE
                     : DosimetryResult.Status.ACCEPTED, result.reading().id(), null);
@@ -47,5 +49,14 @@ public class PersonalDosimetrySessionAdapter implements DosimetrySessionGateway 
             return new DosimetryResult(DosimetryResult.Status.REJECTED, null,
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    /**
+     * La primera lectura de una jornada cubre un intervalo de muestreo hacia
+     * atrás que puede empezar antes de abrirla; solo cuenta desde la apertura.
+     */
+    private Instant withinSession(String sessionId, Instant capturedFrom) {
+        Instant startedAt = dosimetry.getSession(DosimetryActor.system(), sessionId).startedAt();
+        return capturedFrom.isBefore(startedAt) ? startedAt : capturedFrom;
     }
 }
