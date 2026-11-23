@@ -1,11 +1,14 @@
 package com.emsafe.devicemanagement.interfaces.rest;
 
 import com.emsafe.devicemanagement.application.DeviceManagementService;
+import com.emsafe.devicemanagement.application.OrganizationCodeService;
+import com.emsafe.devicemanagement.application.OrganizationCodeService.OrganizationCodeView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.AuditEntryView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DeviceConfigView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DeviceStatusView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.EdgeNodeView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.TelemetryReadingView;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.AssignOrganizationCode;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeAlertThreshold;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeLifecycle;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeOperationalConfig;
@@ -30,6 +33,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DeviceManagementController {
     private final DeviceManagementService service;
+    private final OrganizationCodeService organizationCodes;
     private final DeviceActorResolver actors;
 
     @GetMapping("/devices/{deviceId}")
@@ -84,5 +88,18 @@ public class DeviceManagementController {
     @GetMapping("/edges")
     public ResponseEntity<ApiResponse<List<EdgeNodeView>>> edges(Authentication auth) {
         return ResponseEntity.ok(ApiResponse.ok(service.edges(actors.resolve(auth))));
+    }
+
+    @GetMapping("/organizations/{organizationId}/code")
+    public ResponseEntity<ApiResponse<OrganizationCodeView>> organizationCode(@PathVariable Long organizationId,
+                                                                             Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok(organizationCodes.codeOf(actors.resolve(auth), organizationId)));
+    }
+
+    @PutMapping("/organizations/{organizationId}/code")
+    public ResponseEntity<ApiResponse<OrganizationCodeView>> assignOrganizationCode(
+            @PathVariable Long organizationId, @Valid @RequestBody AssignOrganizationCode req, Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok("Organization code assigned",
+                organizationCodes.assign(actors.resolve(auth), organizationId, req.code())));
     }
 }

@@ -151,6 +151,38 @@ class DeviceManagementApiIntegrationTest {
     }
 
     @Test
+    void theAdministratorAssignsTheCodeTheEdgesPublishWith() throws Exception {
+        Long company = users.findByEmail("company-" + suffix + "@test.local").orElseThrow().getId();
+        Long other = users.findByEmail("other-" + suffix + "@test.local").orElseThrow().getId();
+        String code = "org-" + suffix;
+        String body = "{\"code\": \"" + code + "\"}";
+
+        mvc.perform(put(API + "/organizations/" + company + "/code").with(user(ssoEmail).roles("SSO_RESPONSIBLE"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        for (int i = 0; i < 2; i++) {
+            mvc.perform(put(API + "/organizations/" + company + "/code").with(user(adminEmail).roles("ADMIN"))
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.code").value(code));
+        }
+        mvc.perform(get(API + "/organizations/" + company + "/code").with(user(adminEmail).roles("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.code").value(code));
+
+        mvc.perform(put(API + "/organizations/" + other + "/code").with(user(adminEmail).roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+        mvc.perform(put(API + "/organizations/" + company + "/code").with(user(adminEmail).roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"code\": \"otro-" + suffix + "\"}"))
+                .andExpect(status().isBadRequest());
+        Long sso = users.findByEmail(ssoEmail).orElseThrow().getId();
+        mvc.perform(put(API + "/organizations/" + sso + "/code").with(user(adminEmail).roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"code\": \"sso-" + suffix + "\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void theOwnerOrdersThePlugAndTheCommandIsPublishedAfterCommit() throws Exception {
         String response = mvc.perform(post(API + "/plugs/" + plug + "/commands")
                         .with(user(clientEmail).roles("CLIENT"))

@@ -108,6 +108,9 @@ class DeviceManagementEndToEndTest {
         assertThat(dosimeter.getDeviceType()).isEqualTo(DeviceType.PERSONAL_DOSIMETER);
         assertThat(dosimeter.organizationId()).isEqualTo(company.getId());
         assertThat(devices.findBySerial(PLUG).orElseThrow().organizationId()).isEqualTo(house.getId());
+        Device homeSensor = devices.findBySerial(DeviceManagementDemoSeeder.HOME_SENSOR).orElseThrow();
+        assertThat(homeSensor.getDeviceType()).isEqualTo(DeviceType.FIXED_SENSOR);
+        assertThat(homeSensor.organizationId()).isEqualTo(house.getId());
         assertThat(edges.findByEdgeNodeId(PLANT_EDGE).orElseThrow().getSegment()).isEqualTo(EdgeSegment.PLANT);
         assertThat(edges.findByEdgeNodeId(HOME_EDGE).orElseThrow().getOrganizationId()).isEqualTo(house.getId());
         assertThat(plantEdges.listFor(company.getId())).extracting(PlantEdgeDto::serialNumber).contains(PLANT_EDGE);
