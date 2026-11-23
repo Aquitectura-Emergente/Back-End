@@ -2,6 +2,7 @@ package com.emsafe.devicemanagement;
 
 import com.emsafe.clientportal.application.ClientService;
 import com.emsafe.clientportal.interfaces.rest.dto.ClientReadingDto;
+import com.emsafe.devicemanagement.application.DeviceActor;
 import com.emsafe.devicemanagement.application.TelemetryService;
 import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingDto;
 import com.emsafe.devicemanagement.domain.model.ConnectivityStatus;
@@ -213,7 +214,7 @@ class DeviceManagementEndToEndTest {
         assertThat(clients.getDeviceReadings(company.getId(), dosimeter.getId())).extracting(ClientReadingDto::id)
                 .doesNotContain(homeReadingId);
 
-        ReadingDto published = telemetry.list(DOSIMETER, 50).stream()
+        ReadingDto published = telemetry.list(DeviceActor.system("test"), DOSIMETER, 50).stream()
                 .filter(r -> homeReadingId.equals(r.getId())).findFirst().orElseThrow();
         assertThat(published.getClientId()).isEqualTo(house.getId());
     }

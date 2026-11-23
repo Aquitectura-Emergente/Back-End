@@ -151,6 +151,20 @@ class DeviceManagementApiIntegrationTest {
     }
 
     @Test
+    void readingsNeedASessionAndADeviceInScope() throws Exception {
+        mvc.perform(get("/api/v1/readings")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/readings/" + plug + "/latest")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/readings").with(user(clientEmail).roles("CLIENT")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/readings").param("serialNumber", plug).with(user(clientEmail).roles("CLIENT")))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/readings").param("serialNumber", plug).with(user(otherClientEmail).roles("CLIENT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+        mvc.perform(get("/api/v1/readings").with(user(adminEmail).roles("ADMIN"))).andExpect(status().isOk());
+    }
+
+    @Test
     void theAdministratorAssignsTheCodeTheEdgesPublishWith() throws Exception {
         Long company = users.findByEmail("company-" + suffix + "@test.local").orElseThrow().getId();
         Long other = users.findByEmail("other-" + suffix + "@test.local").orElseThrow().getId();

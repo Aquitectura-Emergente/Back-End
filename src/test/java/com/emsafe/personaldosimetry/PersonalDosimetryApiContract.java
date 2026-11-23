@@ -127,7 +127,8 @@ abstract class PersonalDosimetryApiContract {
     @Test
     void unauthenticatedDosimetryIsRejectedButExistingTelemetryRemainsAvailable() throws Exception {
         mvc.perform(get(BASE + "/workers/me/exposure")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/v1/readings")).andExpect(status().isOk());
+        // Las lecturas ya no son públicas: sin sesión, Device Management responde 403.
+        mvc.perform(get("/api/v1/readings")).andExpect(status().isForbidden());
     }
 
     @Test
