@@ -33,6 +33,11 @@ public class PersonalDosimetrySessionAdapter implements DosimetrySessionGateway 
     }
 
     @Override
+    public Optional<Long> workerOf(String sessionId) {
+        return Optional.ofNullable(dosimetry.getSession(DosimetryActor.system(), sessionId).workerId());
+    }
+
+    @Override
     public DosimetryResult ingest(String sessionId, DosimetryReading r) {
         TransactionTemplate tx = new TransactionTemplate(transactions);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
