@@ -24,6 +24,10 @@ public interface ExposureSessionRepository extends JpaRepository<ExposureSession
 
     Optional<ExposureSession> findFirstByWorkerIdOrderByStartedAtDesc(Long workerId);
 
+    /** La jornada abierta de un operario en su organización (la usa ExposureQueryFacade). */
+    Optional<ExposureSession> findFirstByOrganizationIdAndWorkerIdAndStateOrderByStartedAtDesc(
+            Long organizationId, Long workerId, ExposureSession.State state);
+
     /** Jornadas del dosímetro que cubren un instante (la más reciente primero). */
     @Query("""
             select s.id from ExposureSession s

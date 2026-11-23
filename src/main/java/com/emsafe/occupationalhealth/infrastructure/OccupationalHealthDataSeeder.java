@@ -67,9 +67,12 @@ public class OccupationalHealthDataSeeder implements CommandLineRunner {
 
     /** Organización única de la demo. */
     private static final Long ORG = 1L;
-    private static final String UNIT = "uT.h";
-    private static final String METHOD = DosimetryExposureAdapter.PROVISIONAL_METHOD_ID;
-    private static final BigDecimal LIMIT = new BigDecimal("800");
+    // Las jornadas cerradas de la demo usan la unidad y el método de Personal
+    // Dosimetry (uT*s). Hasta el 2026-11-22 iban en uT.h con el método
+    // provisional; las cifras son las de antes multiplicadas por 3600.
+    private static final String UNIT = PersonalDosimetryExposureAdapter.UNIT;
+    private static final String METHOD = PersonalDosimetryExposureAdapter.METHOD_ID;
+    private static final BigDecimal LIMIT = new BigDecimal("2880000");
 
     private final UserRepository users;
     private final DeviceCatalog devices;
@@ -99,10 +102,10 @@ public class OccupationalHealthDataSeeder implements CommandLineRunner {
             ensureOpenShift(w3, firstPositionOf(zones.get(1)), zones.get(1).getId());
         }
 
-        ensureClosedSession("seed-sess-1", w1, "480", "COMPLETE", 4);
-        ensureClosedSession("seed-sess-2", w1, "760", "COMPLETE", 3);
-        ensureClosedSession("seed-sess-3", w1, "520", "PARTIAL", 2);
-        ensureClosedSession("seed-sess-4", w2, "610", "COMPLETE", 2);
+        ensureClosedSession("seed-sess-1", w1, "1728000", "COMPLETE", 4);
+        ensureClosedSession("seed-sess-2", w1, "2736000", "COMPLETE", 3);
+        ensureClosedSession("seed-sess-3", w1, "1872000", "PARTIAL", 2);
+        ensureClosedSession("seed-sess-4", w2, "2196000", "COMPLETE", 2);
 
         ensureAlertEvidence("seed-alert-ack", w1, "seed-sess-2", "CAUTION", true, false);
         ensureAlertEvidence("seed-alert-esc", w2, "seed-sess-4", "DANGER", false, true);
