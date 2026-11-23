@@ -155,8 +155,10 @@ deduplicar por eventId: no se promete entrega exactly-once. Para consumir una co
 pendientes se vuelve a consultar page=0 después de confirmar; no se avanza el offset
 mientras disminuye el conjunto.
 
-Esta entrega no incorpora un publicador de Azure Service Bus ni sustituye la notificación
-de Alerts. Conserva los hechos pendientes para que el adaptador de integración los publique.
+Esta entrega no incorpora un publicador de Azure Service Bus. El relay en proceso
+(`DosimetryOutboxRelay`, cada 30 s) entrega `OccupationalLimitExceeded`, `ExposureSessionClosed`,
+`ExposureSessionOpened` y `ExposureWarningRaised`; `PersonalReadingArrivedLate` y
+`ExposureSessionCloseRequested` siguen pendientes porque todavía no tienen consumidor.
 
 ## Auditoría y retención
 
@@ -269,10 +271,30 @@ ejecutan con H2; la ejecución completa del perfil MySQL sigue pendiente.
 Las pruebas H2 no certifican la migración en un servidor MySQL, los objetivos de carga o
 disponibilidad, ni una integración con el hardware.
 
+## Integración con Occupational Health (2026-11-22)
+
+Cambios que hizo Fabricio (Occupational Health) dentro de este módulo, coordinados con el
+plan del equipo. No cambian ningún payload ni ninguna tabla:
+
+- **`application/ExposureQueryFacade.java` (nuevo).** Consulta pública de solo lectura:
+  `currentExposure(organizationId, workerId)` devuelve la jornada `OPEN` más reciente del
+  operario con `accumulatedIndex`, `limitIndex`, `unit = "uT*s"`, `methodId =
+  "MAGNETIC_TIME_INDEX_V1"`, `jobPositionId` y `latestCaptureTo`; vacío si no tiene jornada
+  abierta. La usa `PersonalDosimetryExposureAdapter` de Occupational Health. Cambiar su firma
+  rompe a OH: avisar antes.
+- **`ExposureSessionRepository`**: nuevo método
+  `findFirstByOrganizationIdAndWorkerIdAndStateOrderByStartedAtDesc` (lo usa la fachada).
+- **`DosimetryOutboxRelay`**: `ExposureWarningRaised` ahora se entrega **también** a
+  Occupational Health (record `occupationalhealth.application.events.inbound.ExposureWarningRaised`),
+  además del `ExposureWarningRaisedCommand` de AI Forecasting. Se entrega primero a OH; si AI
+  falla, el evento queda pendiente y OH descarta la reentrega por su inbox.
+
 ## Integraciones siguientes
 
 - Acordar con IoT el contrato de intervalos y la confirmación real del lote pendiente.
-- Conectar el publicador de outbox con Alerts y los consumidores de los otros contextos.
+- ~~Conectar el publicador de outbox con Alerts~~: hecho el 2026-11-22. `OccupationalLimitExceeded`
+  y `ExposureWarningRaised` generan la alerta del operario en Occupational Health
+  (`ExposureAlertEventHandler`).
 - Incorporar ShiftUpdated y el cálculo por segmentos cuando se integre Occupational Health.
 - Acordar los plazos de retención del entorno compartido y de la evidencia de exposición.
 - Ejecutar la validación MySQL preparada cuando se libere espacio.

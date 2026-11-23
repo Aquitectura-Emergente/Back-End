@@ -4,15 +4,18 @@ import com.emsafe.alerts.interfaces.rest.dto.AlertDto;
 import com.emsafe.alerts.interfaces.rest.dto.CreateAlarmRequest;
 import com.emsafe.alerts.interfaces.rest.dto.EscalateAlarmRequest;
 import com.emsafe.alerts.domain.model.Alert;
+import com.emsafe.alerts.infrastructure.notification.WorkerAlertNotifier;
 import com.emsafe.alerts.infrastructure.persistence.AlertRepository;
 import com.emsafe.occupationalhealth.application.events.EventEnvelope;
 import com.emsafe.occupationalhealth.application.events.inbound.AlertEvidenceReported;
 import com.emsafe.shared.exception.ResourceNotFoundException;
 import com.emsafe.iam.domain.model.AppUser;
+import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -30,6 +33,18 @@ public class AlarmService {
     private final AlertRepository alertRepository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher events;
+    private final WorkerAlertNotifier notifier;
+
+    /**
+     * Lo que hace falta para avisar a un operario. Lo usa Occupational Health
+     * para la alerta automática de exposición (ExposureAlertEventHandler,
+     * 2026-11-22).
+     *
+     * @param type danger (límite superado) o warning (aviso preventivo)
+     */
+    public record WorkerAlert(Long organizationId, Long workerId, String sessionId,
+                              String type, String icon, String title, String description) {
+    }
 
     public List<AlertDto> getAll() {
         return alertRepository.findAllByOrderByCreatedAtDesc()
@@ -64,6 +79,106 @@ public class AlarmService {
         }
 
         return AlertDto.from(alertRepository.save(alert));
+    }
+
+    /**
+     * Crea una alerta dirigida a un operario y la empuja por STOMP a la app y al
+     * portal del SSO (después del commit, ver {@link WorkerAlertNotifier}).
+     *
+     * <p>Se une a la transacción de quien llama: si el que la pide se deshace, la
+     * alerta también, y el aviso en vivo no sale.</p>
+     */
+    @Transactional
+    public AlertDto raiseWorkerAlert(WorkerAlert request) {
+        if (request.workerId() == null || request.organizationId() == null) {
+            throw new IllegalArgumentException("A worker alert needs workerId and organizationId");
+        }
+        Alert alert = Alert.builder()
+                .type(request.type())
+                .icon(request.icon())
+                .title(request.title())
+                .description(request.description())
+                .relativeTime("Just now")
+                .organizationId(request.organizationId())
+                .workerId(request.workerId())
+                .sessionId(request.sessionId())
+                .createdAt(now())
+                .build();
+        // Una alerta de operario no va a clientes: recipientClientIds queda vacío.
+        alert.setRecipientType(Alert.TO_SPECIFIC);
+        AlertDto saved = AlertDto.from(alertRepository.save(alert));
+        notifier.notify(saved);
+        return saved;
+    }
+
+    /** Las alertas del operario autenticado (GET /api/alarms/mine). */
+    @Transactional(readOnly = true)
+    public List<AlertDto> forWorker(String email) {
+        AppUser worker = actor(email);
+        return alertRepository.findByWorkerIdOrderByCreatedAtDesc(worker.getId())
+                .stream().map(AlertDto::from).toList();
+    }
+
+    /** Las alertas de operario de la organización del SSO autenticado (GET /api/alarms/organization). */
+    @Transactional(readOnly = true)
+    public List<AlertDto> forOrganizationOf(String email) {
+        AppUser sso = actor(email);
+        if (sso.getOrganizationId() == null) {
+            throw new AccessDeniedException("This account is not assigned to an organization");
+        }
+        return alertRepository
+                .findByOrganizationIdAndWorkerIdIsNotNullOrderByCreatedAtDesc(sso.getOrganizationId())
+                .stream().map(AlertDto::from).toList();
+    }
+
+    /**
+     * Alertas {@code danger} de operario sin acuse ni escalamiento, creadas dentro
+     * de la ventana. Las consulta el escalamiento automático (AlertEscalationJob).
+     */
+    @Transactional(readOnly = true)
+    public List<AlertDto> awaitingEscalation(LocalDateTime createdAfter, LocalDateTime createdBefore) {
+        return alertRepository.findAwaitingEscalation("danger", createdAfter, createdBefore)
+                .stream().map(AlertDto::from).toList();
+    }
+
+    /**
+     * Acuse pedido por un usuario. Un operario solo acusa <b>sus</b> alertas: hasta
+     * el 2026-11-22 cualquier operario podía acusar la de otro, y el acuse es
+     * evidencia de cumplimiento. El ADMIN sigue pudiendo.
+     */
+    public AlertDto acknowledgeAs(Long id, String email) {
+        AppUser user = actor(email);
+        if (user.hasRole(Role.WORKER)) {
+            Alert alert = alertRepository.findById(id)
+                    .orElseThrow(() -> new ResourceNotFoundException("Alarm", id));
+            if (alert.getWorkerId() != null && !alert.getWorkerId().equals(user.getId())) {
+                throw new AccessDeniedException("A worker can only acknowledge their own alerts");
+            }
+        }
+        return acknowledge(id);
+    }
+
+    /**
+     * Escalamiento pedido por un usuario. Un SSO solo escala alertas de su
+     * organización (antes podía escalar las de cualquiera). El ADMIN sigue pudiendo.
+     */
+    public AlertDto escalateAs(Long id, EscalateAlarmRequest req, String email) {
+        AppUser user = actor(email);
+        if (user.hasRole(Role.SSO_RESPONSIBLE)) {
+            Alert alert = alertRepository.findById(id)
+                    .orElseThrow(() -> new ResourceNotFoundException("Alarm", id));
+            if (alert.getOrganizationId() != null
+                    && !alert.getOrganizationId().equals(user.getOrganizationId())) {
+                throw new AccessDeniedException("An SSO can only escalate alerts of their organization");
+            }
+        }
+        return escalate(id, req);
+    }
+
+    private AppUser actor(String email) {
+        if (email == null) throw new AccessDeniedException("Access denied");
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new AccessDeniedException("Access denied"));
     }
 
     @Transactional
@@ -101,7 +216,9 @@ public class AlarmService {
         if (first) {
             report(saved, AlertEvidenceReported.Kind.ACKNOWLEDGED, at);
         }
-        return AlertDto.from(saved);
+        AlertDto dto = AlertDto.from(saved);
+        if (first) notifier.notify(dto);
+        return dto;
     }
 
     /**
@@ -122,7 +239,9 @@ public class AlarmService {
         if (first) {
             report(saved, AlertEvidenceReported.Kind.ESCALATED, at);
         }
-        return AlertDto.from(saved);
+        AlertDto dto = AlertDto.from(saved);
+        if (first) notifier.notify(dto);
+        return dto;
     }
 
     /**

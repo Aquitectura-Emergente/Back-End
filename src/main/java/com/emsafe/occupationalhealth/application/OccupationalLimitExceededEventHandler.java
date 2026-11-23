@@ -15,8 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
  * Abre una medida pendiente cuando se confirma una excedencia
  * (informe §5.6.3, RF19).
  *
- * No solicita avisos propios: Alerts ya notificó la excedencia, y pedir otro
- * aviso duplicaría la notificación al operario.
+ * No avisa al operario: de eso se encarga ExposureAlertEventHandler, otro
+ * consumidor del mismo evento (desde el 2026-11-22), y avisar aquí también
+ * duplicaría la notificación.
  */
 @Slf4j
 @Component

@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,6 +24,18 @@ public class AlarmController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<AlertDto>>> getAll() {
         return ResponseEntity.ok(ApiResponse.ok(alarmService.getAll()));
+    }
+
+    /** Las alertas del operario autenticado: lo que lista la app (rol WORKER). */
+    @GetMapping("/mine")
+    public ResponseEntity<ApiResponse<List<AlertDto>>> mine(Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok(alarmService.forWorker(auth.getName())));
+    }
+
+    /** Las alertas de operario de la organización del SSO: lo que lista el portal. */
+    @GetMapping("/organization")
+    public ResponseEntity<ApiResponse<List<AlertDto>>> organization(Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok(alarmService.forOrganizationOf(auth.getName())));
     }
 
     @PostMapping
@@ -45,15 +58,17 @@ public class AlarmController {
      * vuelve a publicar.</p>
      */
     @PostMapping("/{id}/acknowledge")
-    public ResponseEntity<ApiResponse<AlertDto>> acknowledge(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok("Alarm acknowledged", alarmService.acknowledge(id)));
+    public ResponseEntity<ApiResponse<AlertDto>> acknowledge(@PathVariable Long id, Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok("Alarm acknowledged",
+                alarmService.acknowledgeAs(id, auth.getName())));
     }
 
     /** Escala el aviso al Responsable de SSO. Idempotente, como el acuse. */
     @PostMapping("/{id}/escalate")
     public ResponseEntity<ApiResponse<AlertDto>> escalate(
-            @PathVariable Long id, @Valid @RequestBody EscalateAlarmRequest req) {
-        return ResponseEntity.ok(ApiResponse.ok("Alarm escalated", alarmService.escalate(id, req)));
+            @PathVariable Long id, @Valid @RequestBody EscalateAlarmRequest req, Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok("Alarm escalated",
+                alarmService.escalateAs(id, req, auth.getName())));
     }
 
     @DeleteMapping("/{id}")
