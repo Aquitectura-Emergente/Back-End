@@ -37,7 +37,7 @@ public class PersonalDosimetryService {
         var organization = directory.userById(request.organizationId());
         var user = directory.userById(request.userId());
         if (!organization.active() || !organization.clientAccount() || !organization.company()
-                || !user.active() || !user.clientAccount()) {
+                || !user.active() || !eligibleFor(user, request.role())) {
             throw DosimetryRuleException.invalid("An active company and an active client account are required");
         }
         var existing = memberships.findById(request.userId());
@@ -53,6 +53,21 @@ public class PersonalDosimetryService {
         emit(m.getOrganizationId(), "DosimetryMembershipGranted",
                 Map.of("userId", m.getUserId(), "role", m.getRole(), "grantedBy", actor.userId()), now());
         return DosimetryResources.Membership.from(m);
+    }
+
+    /**
+     * Quién puede recibir cada membership. La cuenta CLIENT se sigue aceptando
+     * (es lo que usan los datos de demo y los tests previos), y además la persona
+     * real del segmento industrial: el WORKER como OPERATOR y el SSO_RESPONSIBLE
+     * como SSO. Antes solo valía CLIENT, así que a ningún operario de planta se le
+     * podía abrir jornada y sus lecturas quedaban UNASSIGNED.
+     */
+    private static boolean eligibleFor(DosimetryDirectory.User user, MembershipRole role) {
+        if (user.clientAccount()) return true;
+        return switch (role) {
+            case OPERATOR -> user.worker();
+            case SSO -> user.ssoResponsible();
+        };
     }
 
     public DosimetryResources.Limit configureLimit(DosimetryActor actor, Long organizationId, ConfigureLimit request) {
