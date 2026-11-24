@@ -1,22 +1,28 @@
 package com.emsafe.devicemanagement.interfaces.rest;
 
 import com.emsafe.devicemanagement.application.DeviceManagementService;
+import com.emsafe.devicemanagement.application.OrganizationCodeService;
+import com.emsafe.devicemanagement.application.OrganizationCodeService.OrganizationCodeView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.AuditEntryView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DeviceConfigView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DeviceStatusView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.EdgeNodeView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.TelemetryReadingView;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.AssignOrganizationCode;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeAlertThreshold;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeLifecycle;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeOperationalConfig;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.RegisterEdgeNode;
 import com.emsafe.shared.dto.ApiResponse;
 import com.emsafe.shared.dto.PageResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -30,6 +36,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DeviceManagementController {
     private final DeviceManagementService service;
+    private final OrganizationCodeService organizationCodes;
     private final DeviceActorResolver actors;
 
     @GetMapping("/devices/{deviceId}")
@@ -84,5 +91,25 @@ public class DeviceManagementController {
     @GetMapping("/edges")
     public ResponseEntity<ApiResponse<List<EdgeNodeView>>> edges(Authentication auth) {
         return ResponseEntity.ok(ApiResponse.ok(service.edges(actors.resolve(auth))));
+    }
+
+    @PostMapping("/edges")
+    public ResponseEntity<ApiResponse<EdgeNodeView>> registerEdge(@Valid @RequestBody RegisterEdgeNode req,
+                                                                  Authentication auth) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok("Edge node registered",
+                EdgeNodeView.from(organizationCodes.registerEdge(actors.resolve(auth), req.edgeNodeId(),
+                        req.organizationId(), req.segment()))));
+    }
+
+    @GetMapping("/organization-codes")
+    public ResponseEntity<ApiResponse<List<OrganizationCodeView>>> organizationCodes(Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok(organizationCodes.list(actors.resolve(auth))));
+    }
+
+    @PostMapping("/organization-codes")
+    public ResponseEntity<ApiResponse<OrganizationCodeView>> assignOrganizationCode(
+            @Valid @RequestBody AssignOrganizationCode req, Authentication auth) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok("Organization code assigned",
+                organizationCodes.assign(actors.resolve(auth), req.code(), req.organizationId())));
     }
 }

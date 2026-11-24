@@ -59,6 +59,8 @@ public class DeviceManagementDemoSeeder {
     public static final String ORG_CODE = "org-demo";
     public static final String HOME_CODE = "home-demo";
     public static final String DOSIMETER = "EMSafe-DOS-01";
+    /** deviceId que publica el Edge del hogar por defecto, distinto del dosímetro industrial. */
+    public static final String HOME_SENSOR = "EMSafe-SEN-01";
     public static final String PLUG = "EMSafe-PLUG-01";
     public static final String PLANT_EDGE = "EDGE-PLANTA-01";
     public static final String HOME_EDGE = "EDGE-HOGAR-01";
@@ -145,12 +147,16 @@ public class DeviceManagementDemoSeeder {
                 DeviceType.PERSONAL_DOSIMETER, "Dosímetro demo", company, ACTOR, now));
         dosimeter.assignToZone(zoneId, ACTOR, now);
         devices.save(dosimeter);
+        if (devices.findBySerial(HOME_SENSOR).isEmpty()) {
+            devices.save(Device.register(DeviceSerial.of(HOME_SENSOR), DeviceType.FIXED_SENSOR,
+                    "Sensor del hogar demo", home, ACTOR, now));
+        }
         if (devices.findBySerial(PLUG).isEmpty()) {
             devices.save(Device.register(DeviceSerial.of(PLUG), DeviceType.SMART_PLUG, "Enchufe demo", home,
                     ACTOR, now));
         }
-        log.info("Device management demo data ready: {} → {}, {} → {}, {}, {}, {}, {}", ORG_CODE, COMPANY_EMAIL,
-                HOME_CODE, HOME_EMAIL, DOSIMETER, PLUG, PLANT_EDGE, HOME_EDGE);
+        log.info("Device management demo data ready: {} → {}, {} → {}, {}, {}, {}, {}, {}", ORG_CODE, COMPANY_EMAIL,
+                HOME_CODE, HOME_EMAIL, DOSIMETER, HOME_SENSOR, PLUG, PLANT_EDGE, HOME_EDGE);
         return zoneId;
     }
 

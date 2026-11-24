@@ -149,7 +149,7 @@ class MqttIngestionIntegrationTest {
         assertThat(stored.getFluxUt()).isEqualByComparingTo("219.5");
         DosimetryReading sent = sentToDosimetry();
         assertThat(sent.capturedTo()).isEqualTo(CAPTURED);
-        assertThat(sent.capturedFrom()).isEqualTo(CAPTURED.minusSeconds(1));
+        assertThat(sent.capturedFrom()).isEqualTo(CAPTURED.minusSeconds(30));
         assertThat(sent.sequence()).isEqualTo(1234);
         assertThat(sent.bootId()).isEqualTo(stored.getBootId()).isNotBlank();
         assertThat(sent.saturated()).isFalse();
