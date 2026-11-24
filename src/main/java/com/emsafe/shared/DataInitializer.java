@@ -17,6 +17,7 @@ import com.emsafe.fieldservice.infrastructure.persistence.WorkOrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,8 +28,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+/**
+ * Datos de demostración (usuarios con contraseñas fijas, dispositivos, lecturas, órdenes...).
+ *
+ * <p>Solo corre en los perfiles {@code dev}, {@code demo} y {@code test}: las pruebas de
+ * integración inician sesión con estas cuentas. En {@code prod} el bean no existe, así que
+ * una base vacía arranca sin ningún usuario.</p>
+ */
 @Slf4j
 @Component
+@Profile({"dev", "demo", "test"})
 @RequiredArgsConstructor
 public class DataInitializer implements CommandLineRunner {
 
