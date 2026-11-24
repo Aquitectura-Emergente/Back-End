@@ -26,7 +26,9 @@ ExistingPlatformDirectory. No se cambian los roles generales de la plataforma.
 
 El organizationId es el ID de una cuenta CLIENT activa con clientType = company.
 El dosímetro debe estar asignado a esa cuenta. Dentro de este contexto, un administrador
-concede a una cuenta CLIENT la membresía SSO u OPERATOR para una empresa.
+concede la membresía SSO u OPERATOR para una empresa a cuentas elegibles:
+`WORKER` puede recibir `OPERATOR`, `SSO_RESPONSIBLE` puede recibir `SSO`, y las cuentas
+`CLIENT` activas se siguen admitiendo para datos de demostración y pruebas.
 
 - ADMIN concede membresías y puede operar entre empresas.
 - SSO configura límites y administra jornadas de su empresa.
@@ -37,8 +39,8 @@ concede a una cuenta CLIENT la membresía SSO u OPERATOR para una empresa.
 - La reasignación de una membresía existente se rechaza: requiere un flujo explícito
   de transferencia para no exponer históricos de otra empresa.
 
-Los endpoints nuevos requieren JWT antes de la regla pública histórica de /api/v1.
-El comportamiento de los endpoints de telemetría existentes se conserva.
+Los endpoints de este contexto requieren JWT. El endpoint heredado `/api/v1/readings`
+también exige sesión autenticada desde el ajuste de Device Management (2026-11-23).
 
 ## API
 
@@ -132,33 +134,85 @@ el porcentaje redondeado.
 
 ## Persistencia y eventos
 
-V16__personal_dosimetry.sql añade las cinco tablas iniciales del módulo en MySQL.
-V17__personal_dosimetry_access_audit.sql añade la auditoría de accesos denegados.
-No contienen cambios destructivos de tablas anteriores. V13-V15 se dejaron libres
-para Occupational Health: deben revisarse las migraciones de ambas ramas y su orden
-antes del despliegue compartido.
+- `V16__personal_dosimetry.sql` añade las cinco tablas iniciales del módulo en MySQL.
+- `V17__personal_dosimetry_access_audit.sql` añade la auditoría de accesos denegados.
+- `V26__personal_reading_saturation.sql` añade la bandera `saturated` en lecturas y el
+  contador `out_of_range_readings` en jornadas.
 
-Cada jornada conserva el ID y los valores de su versión de límite. Los cambios de
-configuración posteriores afectan a nuevas jornadas. Las lecturas se almacenan separadas
-del agregado para no cargar el histórico completo en cada ingesta.
+En `main`, `V13` corresponde a `user_organization` y `V19–V21` a Occupational Health
+(`V14–V15` no existen en `main`).
 
-La aplicación bloquea la jornada durante la ingesta. Las restricciones únicas de la
-base de datos protegen la asignación activa y la identidad de cada lectura.
+Cada jornada conserva el ID (`limitVersionId: Long`) y los valores de su versión de límite.
+Los cambios de configuración de límites (`POST /organizations/{id}/limits`) afectan a nuevas
+jornadas; una jornada abierta solo cambia de puesto y límite aplicable cuando recibe un
+`ShiftUpdated` desde Occupational Health. Las lecturas se almacenan separadas del agregado
+para no cargar el histórico completo en cada ingesta.
 
-La modificación del estado y la inserción de sus eventos son una misma transacción.
-La outbox conserva los eventos de membresía, configuración, apertura, advertencia,
-excedencia, solicitud de cierre, consolidación y evidencia tardía.
+La aplicación bloquea la jornada (`PESSIMISTIC_WRITE`) durante la ingesta y los cambios de
+puesto. Las restricciones únicas de la base de datos protegen la asignación activa y la
+identidad de cada lectura.
 
-Un consumidor autorizado puede consultar la primera página de /outbox y confirmar cada
-evento por su eventId mediante /ack solo después de procesarlo correctamente. Debe
-deduplicar por eventId: no se promete entrega exactly-once. Para consumir una cola de
-pendientes se vuelve a consultar page=0 después de confirmar; no se avanza el offset
-mientras disminuye el conjunto.
+La modificación del estado y la inserción de sus eventos en `personal_dosimetry_outbox`
+ocurren en la misma transacción. Todos los payloads incluyen `"schemaVersion": 1` y
+`"organizationId": Long`, y unifican `limitVersionId` como **`Long`** en la outbox, la API
+REST y los contratos en proceso hacia Occupational Health y AI Forecasting.
 
-Esta entrega no incorpora un publicador de Azure Service Bus. El relay en proceso
-(`DosimetryOutboxRelay`, cada 30 s) entrega `OccupationalLimitExceeded`, `ExposureSessionClosed`,
-`ExposureSessionOpened` y `ExposureWarningRaised`; `PersonalReadingArrivedLate` y
-`ExposureSessionCloseRequested` siguen pendientes porque todavía no tienen consumidor.
+### Los cuatro eventos que entrega `DosimetryOutboxRelay`
+
+El relay en proceso (`DosimetryOutboxRelay`, cada 30 s por defecto) lee los eventos con
+`publishedAt IS NULL` de los cuatro tipos entregables, publica los contratos en proceso y
+marca `publishedAt`:
+
+1. **`ExposureSessionOpened` → AI Forecasting (`UpsertExposureSnapshotCommand`)**
+   - Payload en outbox:
+     `sessionId: String (UUID)`, `workerId: Long`, `deviceId: Long`, `limitVersionId: Long`,
+     `positionId: Long`, `accumulatedIndex: BigDecimal ("0")`, `limitIndex: BigDecimal`,
+     `startedAt: Instant (ISO-8601 UTC)`, `openedBy: Long`.
+   - Traducción del relay: crea `UpsertExposureSnapshotCommand` con `zoneId = null` (la zona
+     llega por `ShiftUpdated`) y `capturedAt = startedAt`.
+
+2. **`ExposureWarningRaised` → Occupational Health (`ExposureWarningRaised`) y AI Forecasting (`ExposureWarningRaisedCommand`)**
+   - Payload en outbox:
+     `sessionId: String`, `workerId: Long`, `readingId: String` *(opcional si el cruce proviene de `ShiftUpdated`)*,
+     `accumulatedIndex: BigDecimal`, `limitIndex: BigDecimal`, `limitVersionId: Long`,
+     `capturedAt: Instant`, `detectedAt: Instant`, `methodId: "MAGNETIC_TIME_INDEX_V1"`,
+     `unit: "uT*s"`.
+   - Traducción del relay: primero publica `occupationalhealth.application.events.inbound.ExposureWarningRaised`
+     (`dose = accumulatedIndex`, `limit = limitIndex`, `limitVersionId: Long`, fechas en
+     `LocalDateTime` UTC) para disparar la alerta preventiva `warning` al operario; luego
+     publica `ExposureWarningRaisedCommand` (`limitVersionId: Long`, `capturedAt: Instant`)
+     hacia AI Forecasting.
+
+3. **`OccupationalLimitExceeded` → Occupational Health (`OccupationalLimitExceeded`)**
+   - Payload en outbox: idéntico al de `ExposureWarningRaised`.
+   - Traducción del relay: publica `occupationalhealth.application.events.inbound.OccupationalLimitExceeded`
+     (`segmentId = null`, `dose = accumulatedIndex`, `limit = limitIndex`,
+     `limitVersionId: Long`, `methodId`, `unit`, `capturedAt`/`detectedAt` en `LocalDateTime`
+     UTC). En OH lo consumen `OccupationalLimitExceededEventHandler` (abre propuesta de
+     mitigación) y `ExposureAlertEventHandler` (crea alerta `danger` con escalamiento al SSO).
+
+4. **`ExposureSessionClosed` → Occupational Health (`ExposureSessionClosed`)**
+   - Payload en outbox:
+     `sessionId: String`, `workerId: Long`, `accumulatedIndex: BigDecimal`,
+     `limitIndex: BigDecimal`, `limitVersionId: Long`, `coveragePercentage: BigDecimal`,
+     `coverageComplete: boolean`, `finalizedBy: Long`, `finalizedAt: Instant`,
+     `methodId: "MAGNETIC_TIME_INDEX_V1"`, `unit: "uT*s"`.
+   - Traducción del relay: publica `ExposureSessionClosed` con `snapshotId = null`,
+     `finalDose = accumulatedIndex`, `limit = limitIndex`, `coverage = "<pct>% (completa|incompleta)"`
+     y `finalizedAt` en `LocalDateTime` UTC (con respaldo en `occurredAt` para eventos
+     anteriores al 2026-11-12).
+
+### Otros eventos en `personal_dosimetry_outbox`
+
+- `DosimetryMembershipGranted` (`userId, role, grantedBy`) y `OccupationalLimitConfigured`
+  (`limitVersionId, version, positionId, changedBy, methodId`): auditoría de configuración.
+- `ExposureSessionCloseRequested` (`sessionId, endedAt, requestedBy`) y
+  `PersonalReadingArrivedLate` (`sessionId, readingId, capturedAt, receivedAt`): quedan
+  pendientes sin bloquear a los cuatro tipos entregables (la consulta del relay filtra por
+  `eventType IN DELIVERABLE`).
+
+Un consumidor externo autorizado también puede consultar `GET /outbox` y confirmar con
+`POST /outbox/{id}/ack` deduplicando por `eventId`.
 
 ## Auditoría y retención
 
@@ -289,16 +343,37 @@ plan del equipo. No cambian ningún payload ni ninguna tabla:
   además del `ExposureWarningRaisedCommand` de AI Forecasting. Se entrega primero a OH; si AI
   falla, el evento queda pendiente y OH descarta la reentrega por su inbox.
 
+## Integración Partnership y contratos unificados (2026-11-24)
+
+- **Unificación de `limitVersionId` a `Long`.** Tanto en `personal_dosimetry_outbox` como en
+  `DosimetryOutboxRelay`, `OccupationalLimitExceeded` y `ExposureWarningRaised` (Occupational
+  Health) y `ExposureWarningRaisedCommand` (AI Forecasting), `limitVersionId` viaja como
+  `Long` (el relay admite también cadenas numéricas heredadas al leer JSON antiguo).
+- **Consumo de `ShiftUpdated` (`infrastructure/DosimetryShiftUpdatedEventListener.java`).**
+  Escucha `occupationalhealth.application.events.ShiftUpdated` con
+  `@TransactionalEventListener(AFTER_COMMIT)` y `@Transactional(REQUIRES_NEW)`:
+  - Localiza la jornada por `sessionId` o, si viene nulo/vacío, busca la jornada `OPEN` del
+    operario en la organización; si no existe jornada abierta en dosimetría, ignora el evento
+    sin afectar la transacción ya confirmada en Occupational Health.
+  - Conserva `accumulatedIndex` (`uT*s`), actualiza `jobPositionId`, `limitVersionId`,
+    `limitIndex` y `warningRatio` al límite vigente del `newPositionId`, y reevalúa
+    `warningRaised` y `limitExceeded` frente al nuevo límite (si el puesto destino tiene un
+    límite mayor, limpia las banderas para volver a avisar si más tarde se supera; si es más
+    estricto y el acumulado ya lo cruza, emite los eventos de umbral correspondientes).
+  - Deduplica reentregas por `(sessionId/workerId, eventId)`. El historial de tramos por
+    puesto sigue residiendo en `WorkerShift.assignments` de Occupational Health (versión
+    mínima sin tabla `SessionPositionSegment`).
+
 ## Integraciones siguientes
 
-- Acordar con IoT el contrato de intervalos y la confirmación real del lote pendiente.
-- ~~Conectar el publicador de outbox con Alerts~~: hecho el 2026-11-22. `OccupationalLimitExceeded`
-  y `ExposureWarningRaised` generan la alerta del operario en Occupational Health
-  (`ExposureAlertEventHandler`).
-- Incorporar ShiftUpdated y el cálculo por segmentos cuando se integre Occupational Health.
+- ~~Conectar el publicador de outbox con Alerts~~: hecho el 2026-11-22 (`ExposureAlertEventHandler`).
+- ~~Unificar `limitVersionId` y documentar los cuatro payloads del relay~~: hecho el 2026-11-24.
+- ~~Incorporar `ShiftUpdated` (versión mínima)~~: hecho el 2026-11-24 (`DosimetryShiftUpdatedEventListener`).
+- Opcional futuro: persistir segmentos por puesto (`SessionPositionSegment`) dentro de dosimetría si se requiere desglose por tramo además del de `WorkerShift`.
 - Acordar los plazos de retención del entorno compartido y de la evidencia de exposición.
-- Ejecutar la validación MySQL preparada cuando se libere espacio.
-- Repetir carga y recuperación con HTTP y el entorno de despliegue.
+- Ejecutar la validación MySQL preparada (`scripts/Test-PersonalDosimetryMySql.ps1`) cuando se disponga de instancia local con espacio libre.
+- Repetir carga y recuperación con HTTP en el entorno de despliegue.
 
-El estado actual incluye jornadas, cálculo, consulta, persistencia, auditoría y limpieza configurable.
-Estos puntos pendientes no se presentan como funcionalidades ya implementadas.
+El estado actual incluye jornadas, ingesta vía ACL desde Device Management y vía REST,
+cambio de puesto por `ShiftUpdated`, fachada `ExposureQueryFacade`, cálculo en `uT*s`,
+relay de outbox en proceso, auditoría y limpieza configurable.

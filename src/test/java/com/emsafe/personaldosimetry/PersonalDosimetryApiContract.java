@@ -57,6 +57,8 @@ abstract class PersonalDosimetryApiContract {
     @SpyBean DosimetryAccessAuditRepository audits;
     @Autowired DosimetryRetentionService retention;
     @Autowired DosimetryAuditService auditService;
+    @Autowired ExposureQueryFacade exposureQueryFacade;
+    @Autowired org.springframework.context.ApplicationEventPublisher eventPublisher;
     @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
     @Autowired DosimetryRetentionProperties retentionPolicy;
     @MockBean DataInitializer initializer;
@@ -594,5 +596,93 @@ abstract class PersonalDosimetryApiContract {
         postAs(ADMIN, "/outbox/" + eventId + "/ack", null).andExpect(status().isNoContent());
         assertThat(events.findById(eventId).orElseThrow().getPublishedAt()).isEqualTo(NOW);
         assertThat(service.pendingEvents(admin(), 0, 20).totalElements()).isZero();
+    }
+
+    @Test
+    void shiftUpdatedAfterCommitPreservesAccumulatedExposureSwitchesLimitAndDeduplicates() {
+        var position2Limit = limits.saveAndFlush(new OccupationalLimit(
+                company.getId(), 2L, 1, new BigDecimal("250"), new BigDecimal("0.8"),
+                START.minusSeconds(3600), "SAFE-POSITION-2", admin.getId(), START.minusSeconds(3600)));
+
+        String id = openSession();
+        // Acumula 85 uT*s en el puesto 1 (límite 100, aviso en 80 -> warningRaised = true).
+        service.ingest(sso(), id, capture(1, "17", 0, 5));
+        assertThat(service.getSession(sso(), id).warningRaised()).isTrue();
+        assertThat(events.findAll().stream().filter(e -> e.getEventType().equals("ExposureWarningRaised"))).hasSize(1);
+
+        var envelope = new com.emsafe.occupationalhealth.application.events.EventEnvelope(
+                "evt-shift-1", 1, company.getId(),
+                LocalDateTime.ofInstant(START.plusSeconds(6), ZoneOffset.UTC), "corr-1", null);
+        var shiftEvent = new com.emsafe.occupationalhealth.application.events.ShiftUpdated(
+                envelope, id, 50L, worker.getId(), 1L, 2L, 10L,
+                LocalDateTime.ofInstant(START.plusSeconds(6), ZoneOffset.UTC), supervisor.getId());
+
+        new org.springframework.transaction.support.TransactionTemplate(transactions)
+                .executeWithoutResult(tx -> eventPublisher.publishEvent(shiftEvent));
+        // Reenvío del mismo evento: idempotente.
+        new org.springframework.transaction.support.TransactionTemplate(transactions)
+                .executeWithoutResult(tx -> eventPublisher.publishEvent(shiftEvent));
+
+        var updated = service.getSession(sso(), id);
+        assertThat(updated.accumulatedIndex()).isEqualByComparingTo("85");
+        assertThat(updated.jobPositionId()).isEqualTo(2L);
+        assertThat(updated.limitVersionId()).isEqualTo(position2Limit.getId());
+        assertThat(updated.limitIndex()).isEqualByComparingTo("250");
+        assertThat(updated.warningRaised()).isFalse();
+
+        var queried = exposureQueryFacade.currentExposure(company.getId(), worker.getId()).orElseThrow();
+        assertThat(queried.accumulatedIndex()).isEqualByComparingTo("85");
+        assertThat(queried.limitIndex()).isEqualByComparingTo("250");
+        assertThat(queried.jobPositionId()).isEqualTo(2L);
+
+        // Si en el puesto 2 supera el nuevo umbral de aviso (200), vuelve a emitir ExposureWarningRaised con el nuevo limitVersionId (Long).
+        service.ingest(sso(), id, capture(2, "24", 5, 10)); // +120 => 205 uT*s
+        var warnings = events.findAll().stream()
+                .filter(e -> e.getEventType().equals("ExposureWarningRaised"))
+                .toList();
+        assertThat(warnings).hasSize(2);
+    }
+
+    @Test
+    void shiftUpdatedWithoutSessionIdFindsOpenWorkerSessionAndIgnoresUnknownSessions() {
+        var stricterLimit = limits.saveAndFlush(new OccupationalLimit(
+                company.getId(), 3L, 1, new BigDecimal("50"), new BigDecimal("0.8"),
+                START.minusSeconds(3600), "STRICT-POSITION-3", admin.getId(), START.minusSeconds(3600)));
+
+        String id = openSession();
+        service.ingest(sso(), id, capture(1, "12", 0, 5)); // 60 uT*s (bajo 80 en puesto 1, sobre 50 en puesto 3)
+
+        // Un ShiftUpdated de una sesión ajena/inexistente no lanza excepción ni altera la sesión abierta.
+        var unknownEnvelope = new com.emsafe.occupationalhealth.application.events.EventEnvelope(
+                "evt-shift-unknown", 1, company.getId(),
+                LocalDateTime.ofInstant(START.plusSeconds(6), ZoneOffset.UTC), "corr-u", null);
+        new org.springframework.transaction.support.TransactionTemplate(transactions)
+                .executeWithoutResult(tx -> eventPublisher.publishEvent(
+                        new com.emsafe.occupationalhealth.application.events.ShiftUpdated(
+                                unknownEnvelope, "S-IT-UNKNOWN", 51L, worker.getId(), 1L, 3L, 10L,
+                                LocalDateTime.ofInstant(START.plusSeconds(6), ZoneOffset.UTC), supervisor.getId())));
+        assertThat(service.getSession(sso(), id).jobPositionId()).isEqualTo(1L);
+
+        // Sin sessionId, localiza la jornada abierta del operario y emite los cruces frente al límite más estricto.
+        var fallbackEnvelope = new com.emsafe.occupationalhealth.application.events.EventEnvelope(
+                "evt-shift-fallback", 1, company.getId(),
+                LocalDateTime.ofInstant(START.plusSeconds(7), ZoneOffset.UTC), "corr-f", null);
+        new org.springframework.transaction.support.TransactionTemplate(transactions)
+                .executeWithoutResult(tx -> eventPublisher.publishEvent(
+                        new com.emsafe.occupationalhealth.application.events.ShiftUpdated(
+                                fallbackEnvelope, null, 52L, worker.getId(), 1L, 3L, 10L,
+                                LocalDateTime.ofInstant(START.plusSeconds(7), ZoneOffset.UTC), supervisor.getId())));
+
+        var moved = service.getSession(sso(), id);
+        assertThat(moved.jobPositionId()).isEqualTo(3L);
+        assertThat(moved.limitVersionId()).isEqualTo(stricterLimit.getId());
+        assertThat(moved.accumulatedIndex()).isEqualByComparingTo("60");
+        assertThat(moved.warningRaised()).isTrue();
+        assertThat(moved.limitExceeded()).isTrue();
+
+        var exceeded = events.findAll().stream()
+                .filter(e -> e.getEventType().equals("OccupationalLimitExceeded"))
+                .findFirst().orElseThrow();
+        assertThat(exceeded.getPayload()).contains("\"limitVersionId\":" + stricterLimit.getId());
     }
 }
