@@ -32,6 +32,7 @@ public class ExistingPlatformDirectory implements DosimetryDirectory {
     private User snapshot(AppUser user) {
         return new User(user.getId(), user.getStatus() == null || user.isActive(),
                 user.hasRole(Role.ADMIN), user.hasRole(Role.CLIENT),
-                "company".equalsIgnoreCase(user.getClientType()));
+                "company".equalsIgnoreCase(user.getClientType()),
+                user.hasRole(Role.WORKER), user.hasRole(Role.SSO_RESPONSIBLE));
     }
 }
