@@ -12,14 +12,17 @@ import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeAlertThreshold;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeLifecycle;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.ChangeOperationalConfig;
+import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.RegisterEdgeNode;
 import com.emsafe.shared.dto.ApiResponse;
 import com.emsafe.shared.dto.PageResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -90,16 +93,23 @@ public class DeviceManagementController {
         return ResponseEntity.ok(ApiResponse.ok(service.edges(actors.resolve(auth))));
     }
 
-    @GetMapping("/organizations/{organizationId}/code")
-    public ResponseEntity<ApiResponse<OrganizationCodeView>> organizationCode(@PathVariable Long organizationId,
-                                                                             Authentication auth) {
-        return ResponseEntity.ok(ApiResponse.ok(organizationCodes.codeOf(actors.resolve(auth), organizationId)));
+    @PostMapping("/edges")
+    public ResponseEntity<ApiResponse<EdgeNodeView>> registerEdge(@Valid @RequestBody RegisterEdgeNode req,
+                                                                  Authentication auth) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok("Edge node registered",
+                EdgeNodeView.from(organizationCodes.registerEdge(actors.resolve(auth), req.edgeNodeId(),
+                        req.organizationId(), req.segment()))));
     }
 
-    @PutMapping("/organizations/{organizationId}/code")
+    @GetMapping("/organization-codes")
+    public ResponseEntity<ApiResponse<List<OrganizationCodeView>>> organizationCodes(Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok(organizationCodes.list(actors.resolve(auth))));
+    }
+
+    @PostMapping("/organization-codes")
     public ResponseEntity<ApiResponse<OrganizationCodeView>> assignOrganizationCode(
-            @PathVariable Long organizationId, @Valid @RequestBody AssignOrganizationCode req, Authentication auth) {
-        return ResponseEntity.ok(ApiResponse.ok("Organization code assigned",
-                organizationCodes.assign(actors.resolve(auth), organizationId, req.code())));
+            @Valid @RequestBody AssignOrganizationCode req, Authentication auth) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok("Organization code assigned",
+                organizationCodes.assign(actors.resolve(auth), req.code(), req.organizationId())));
     }
 }

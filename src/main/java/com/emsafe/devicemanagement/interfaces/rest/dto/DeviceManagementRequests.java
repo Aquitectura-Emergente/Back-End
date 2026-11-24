@@ -18,7 +18,11 @@ public final class DeviceManagementRequests {
     public record ChangeLifecycle(@NotBlank String status) {
     }
 
-    public record AssignOrganizationCode(@NotBlank String code) {
+    public record AssignOrganizationCode(@NotBlank String code, @NotNull Long organizationId) {
+    }
+
+    public record RegisterEdgeNode(@NotBlank String edgeNodeId, @NotNull Long organizationId,
+                                   @NotBlank String segment) {
     }
 
     public record RequestPlugCommand(@NotBlank String action) {

@@ -23,6 +23,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -165,35 +166,59 @@ class DeviceManagementApiIntegrationTest {
     }
 
     @Test
-    void theAdministratorAssignsTheCodeTheEdgesPublishWith() throws Exception {
+    void theAdministratorRegistersOrganizationCodes() throws Exception {
         Long company = users.findByEmail("company-" + suffix + "@test.local").orElseThrow().getId();
         Long other = users.findByEmail("other-" + suffix + "@test.local").orElseThrow().getId();
-        String code = "org-" + suffix;
-        String body = "{\"code\": \"" + code + "\"}";
-
-        mvc.perform(put(API + "/organizations/" + company + "/code").with(user(ssoEmail).roles("SSO_RESPONSIBLE"))
-                        .contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isForbidden());
-        for (int i = 0; i < 2; i++) {
-            mvc.perform(put(API + "/organizations/" + company + "/code").with(user(adminEmail).roles("ADMIN"))
-                            .contentType(MediaType.APPLICATION_JSON).content(body))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data.code").value(code));
-        }
-        mvc.perform(get(API + "/organizations/" + company + "/code").with(user(adminEmail).roles("ADMIN")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.code").value(code));
-
-        mvc.perform(put(API + "/organizations/" + other + "/code").with(user(adminEmail).roles("ADMIN"))
-                        .contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isBadRequest());
-        mvc.perform(put(API + "/organizations/" + company + "/code").with(user(adminEmail).roles("ADMIN"))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"code\": \"otro-" + suffix + "\"}"))
-                .andExpect(status().isBadRequest());
         Long sso = users.findByEmail(ssoEmail).orElseThrow().getId();
-        mvc.perform(put(API + "/organizations/" + sso + "/code").with(user(adminEmail).roles("ADMIN"))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"code\": \"sso-" + suffix + "\"}"))
-                .andExpect(status().isBadRequest());
+        String code = "org-" + suffix;
+
+        postCode(clientEmail, "CLIENT", code, company).andExpect(status().isForbidden());
+        postCode(ssoEmail, "SSO_RESPONSIBLE", code, company).andExpect(status().isForbidden());
+        postCode(adminEmail, "ADMIN", code, company)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.code").value(code))
+                .andExpect(jsonPath("$.data.organizationId").value(company));
+        mvc.perform(get(API + "/organization-codes").with(user(adminEmail).roles("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.code == '" + code + "')].organizationId").value(company.intValue()));
+        mvc.perform(get(API + "/organization-codes").with(user(clientEmail).roles("CLIENT")))
+                .andExpect(status().isForbidden());
+
+        postCode(adminEmail, "ADMIN", code, other).andExpect(status().isBadRequest());
+        postCode(adminEmail, "ADMIN", "otro-" + suffix, company).andExpect(status().isBadRequest());
+        postCode(adminEmail, "ADMIN", "sso-" + suffix, sso).andExpect(status().isBadRequest());
+        postCode(adminEmail, "ADMIN", "nadie-" + suffix, 999_999_999L).andExpect(status().isNotFound());
+        postCode(adminEmail, "ADMIN", "Org Demo", other).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void theAdministratorRegistersEdgeNodes() throws Exception {
+        Long company = users.findByEmail("company-" + suffix + "@test.local").orElseThrow().getId();
+        String edge = "EDGE-" + suffix;
+
+        postEdge(clientEmail, "CLIENT", edge, company, "PLANT").andExpect(status().isForbidden());
+        postEdge(adminEmail, "ADMIN", edge, company, "plant")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.edgeNodeId").value(edge))
+                .andExpect(jsonPath("$.data.segment").value("PLANT"))
+                .andExpect(jsonPath("$.data.connectivity").value("OFFLINE"));
+        postEdge(adminEmail, "ADMIN", edge, company, "PLANT").andExpect(status().isBadRequest());
+        postEdge(adminEmail, "ADMIN", "EDGE2-" + suffix, company, "OFFICE").andExpect(status().isBadRequest());
+        postEdge(adminEmail, "ADMIN", "EDGE3-" + suffix, 999_999_999L, "HOME").andExpect(status().isNotFound());
+    }
+
+    private ResultActions postCode(String email, String role, String code, Long organizationId) throws Exception {
+        return mvc.perform(post(API + "/organization-codes").with(user(email).roles(role))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\": \"" + code + "\", \"organizationId\": " + organizationId + "}"));
+    }
+
+    private ResultActions postEdge(String email, String role, String edgeNodeId, Long organizationId, String segment)
+            throws Exception {
+        return mvc.perform(post(API + "/edges").with(user(email).roles(role))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"edgeNodeId\": \"" + edgeNodeId + "\", \"organizationId\": " + organizationId
+                        + ", \"segment\": \"" + segment + "\"}"));
     }
 
     @Test

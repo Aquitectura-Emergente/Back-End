@@ -23,10 +23,11 @@ public class AlertsDeviceAlertAdapter implements DeviceAlertGateway {
     @Override
     public void dosimeterSilent(Long organizationId, Long workerId, String sessionId, String deviceId,
                                 Instant lastSeenAt) {
-        alarms.create(new CreateAlarmRequest("warning", "ph-wifi-slash", "Dosímetro sin señal",
+        // Alerta de operario: la ve en vivo la app y el SSO de la organización.
+        alarms.raiseWorkerAlert(new AlarmService.WorkerAlert(organizationId, workerId, sessionId, "warning",
+                "ph-wifi-slash", "Dosímetro sin señal",
                 "El dosímetro " + deviceId + " no transmite desde las " + hour(lastSeenAt)
-                        + ". La exposición de la jornada no se está registrando.",
-                null, "specific", List.of(workerId), deviceId, organizationId, workerId, sessionId));
+                        + ". La exposición de la jornada no se está registrando."));
     }
 
     @Override
