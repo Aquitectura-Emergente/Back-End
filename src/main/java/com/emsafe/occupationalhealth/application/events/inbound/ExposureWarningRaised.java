@@ -17,7 +17,8 @@ import java.time.LocalDateTime;
  * entregaba este hecho solo a AI Forecasting (como
  * {@code ExposureWarningRaisedCommand}). Los campos son los mismos que los de
  * {@link OccupationalLimitExceeded} porque Dosimetry emite los dos con el mismo
- * payload; {@code limitVersionId} viaja como texto, igual que en aquel.</p>
+ * payload; {@code limitVersionId} viaja unificado como {@code Long}, igual que
+ * en aquel y hacia AI Forecasting.</p>
  */
 public record ExposureWarningRaised(
         EventEnvelope envelope,
@@ -26,7 +27,7 @@ public record ExposureWarningRaised(
         BigDecimal dose,
         String unit,
         BigDecimal limit,
-        String limitVersionId,
+        Long limitVersionId,
         String methodId,
         LocalDateTime capturedAt,
         LocalDateTime detectedAt) {

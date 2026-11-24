@@ -241,7 +241,7 @@ public class DosimetryOutboxRelay {
                 decimal(payload.get("accumulatedIndex")),
                 text(payload.get("unit")),
                 decimal(payload.get("limitIndex")),
-                text(payload.get("limitVersionId")),
+                number(payload.get("limitVersionId")),
                 text(payload.get("methodId")),
                 dateTime(payload.get("capturedAt")),
                 dateTime(payload.get("detectedAt")));
@@ -283,9 +283,9 @@ public class DosimetryOutboxRelay {
      * sin divergencia de vocabulario: los once campos del comando se llaman igual
      * que los del payload.
      *
-     * <p>{@code limitVersionId} viaja como número y no como texto, al contrario
-     * que hacia Occupational Health: aquí el destino lo tipa {@code Long}, y es el
-     * tipo real del id del límite en este contexto.</p>
+     * <p>{@code limitVersionId} viaja unificado como {@code Long} tanto hacia AI
+     * Forecasting como hacia Occupational Health, coincidiendo con el tipo real
+     * del identificador del límite en este contexto.</p>
      */
     private ExposureWarningRaisedCommand toWarningRaised(DosimetryEvent event) {
         Map<String, Object> payload = read(event);
@@ -314,7 +314,7 @@ public class DosimetryOutboxRelay {
                 decimal(payload.get("accumulatedIndex")),
                 text(payload.get("unit")),
                 decimal(payload.get("limitIndex")),
-                text(payload.get("limitVersionId")),
+                number(payload.get("limitVersionId")),
                 text(payload.get("methodId")),
                 dateTime(payload.get("capturedAt")),
                 dateTime(payload.get("detectedAt")));
@@ -338,7 +338,17 @@ public class DosimetryOutboxRelay {
     }
 
     private static Long number(Object value) {
-        return value instanceof Number n ? n.longValue() : null;
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return Long.valueOf(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /**

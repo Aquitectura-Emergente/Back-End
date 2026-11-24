@@ -198,6 +198,66 @@ public class PersonalDosimetryService {
         return sessions.findSessionIdsCovering(deviceId, at, PageRequest.of(0, 1)).stream().findFirst();
     }
 
+    /**
+     * Aplica un cambio de puesto ({@code ShiftUpdated} de Occupational Health) a la
+     * jornada abierta del operario: conserva {@code accumulatedIndex} y pasa a
+     * evaluar con el límite vigente del puesto nuevo.
+     *
+     * <p>Si {@code sessionId} viene informado, busca esa jornada; si es nulo o en
+     * blanco, usa la jornada abierta del operario en la organización. Si no existe
+     * la jornada en este contexto (por ejemplo, un turno de Occupational Health sin
+     * sesión de dosimetría vinculada), devuelve vacío sin fallar.</p>
+     */
+    public java.util.Optional<DosimetryResources.Session> applyShiftUpdate(
+            Long organizationId, String sessionId, Long workerId, Long newPositionId, Instant effectiveAt) {
+        ExposureIndex.positiveId(organizationId, "organizationId");
+        ExposureIndex.positiveId(workerId, "workerId");
+        ExposureIndex.positiveId(newPositionId, "newPositionId");
+
+        java.util.Optional<ExposureSession> found = (sessionId != null && !sessionId.isBlank())
+                ? sessions.findLocked(sessionId)
+                : sessions.findFirstByOrganizationIdAndWorkerIdAndStateOrderByStartedAtDesc(
+                                organizationId, workerId, ExposureSession.State.OPEN)
+                        .flatMap(s -> sessions.findLocked(s.getId()));
+        if (found.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        var session = found.get();
+        if (!session.getOrganizationId().equals(organizationId) || !session.getWorkerId().equals(workerId)) {
+            throw DosimetryRuleException.conflict("Shift update does not match session organization or worker");
+        }
+        if (session.getState() != ExposureSession.State.OPEN) {
+            throw DosimetryRuleException.conflict("Only open sessions accept shift updates");
+        }
+        Instant now = now();
+        Instant effective = (effectiveAt == null
+                || effectiveAt.isBefore(session.getStartedAt())
+                || effectiveAt.isAfter(now))
+                ? now
+                : effectiveAt.truncatedTo(ChronoUnit.MICROS);
+        var limit = limits
+                .findFirstByOrganizationIdAndJobPositionIdAndEffectiveFromLessThanEqualOrderByEffectiveFromDescVersionNumberDesc(
+                        organizationId, newPositionId, effective)
+                .orElseThrow(() -> DosimetryRuleException.invalid("No effective limit exists for the job position"));
+        var crossed = session.changePosition(limit, effective);
+        sessions.saveAndFlush(session);
+        if (crossed.warning() || crossed.exceeded()) {
+            var payload = new LinkedHashMap<String, Object>();
+            payload.put("sessionId", session.getId());
+            payload.put("workerId", session.getWorkerId());
+            payload.put("accumulatedIndex", session.getAccumulatedIndex());
+            payload.put("limitIndex", session.getLimitIndex());
+            payload.put("limitVersionId", session.getLimitVersionId());
+            payload.put("capturedAt", session.getLatestCaptureTo());
+            payload.put("detectedAt", now);
+            payload.put("methodId", ExposureIndex.METHOD);
+            payload.put("unit", ExposureIndex.UNIT);
+            if (crossed.warning()) emit(session.getOrganizationId(), "ExposureWarningRaised", payload, effective);
+            if (crossed.exceeded()) emit(session.getOrganizationId(), "OccupationalLimitExceeded", payload, effective);
+        }
+        return java.util.Optional.of(view(session));
+    }
+
     public DosimetryResources.Session requestClose(DosimetryActor actor, String id, CloseSession request) {
         var session = locked(id);
         actor.requireSupervisor(session.getOrganizationId());

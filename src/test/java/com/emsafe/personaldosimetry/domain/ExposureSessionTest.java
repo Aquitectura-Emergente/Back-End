@@ -99,4 +99,69 @@ class ExposureSessionTest {
         assertThat(s.coverage(START.plusSeconds(1))).isEqualByComparingTo("100.00");
         assertThat(s.coverageComplete()).isFalse();
     }
+
+    @Test
+    void changePositionPreservesAccumulatedExposureAndReevaluatesHigherLimit() {
+        var s = open(); // position 4L, limit 100, warningRatio 0.8 (80)
+        assertThat(s.apply(new BigDecimal("85"), 1_000_000, START.plusSeconds(1)).warning()).isTrue();
+        assertThat(s.isWarningRaised()).isTrue();
+
+        var saferLimit = new OccupationalLimit(1L, 5L, 1, new BigDecimal("250"), new BigDecimal("0.8"),
+                START, "SAFE-POS", 1L, START);
+        ReflectionTestUtils.setField(saferLimit, "id", 11L);
+
+        var crossings = s.changePosition(saferLimit, START.plusSeconds(2));
+        assertThat(crossings.warning()).isFalse();
+        assertThat(crossings.exceeded()).isFalse();
+        assertThat(s.getAccumulatedIndex()).isEqualByComparingTo("85");
+        assertThat(s.getJobPositionId()).isEqualTo(5L);
+        assertThat(s.getLimitVersionId()).isEqualTo(11L);
+        assertThat(s.getLimitIndex()).isEqualByComparingTo("250");
+        assertThat(s.isWarningRaised()).isFalse();
+
+        // Si en el puesto nuevo vuelve a superar el umbral (200), vuelve a avisar.
+        assertThat(s.apply(new BigDecimal("116"), 1_000_000, START.plusSeconds(3)).warning()).isTrue();
+    }
+
+    @Test
+    void changePositionToStricterLimitReportsImmediateCrossingsOnce() {
+        var s = open(); // limit 100
+        s.apply(new BigDecimal("60"), 1_000_000, START.plusSeconds(1));
+
+        var stricterLimit = new OccupationalLimit(1L, 6L, 1, new BigDecimal("50"), new BigDecimal("0.8"),
+                START, "STRICT-POS", 1L, START);
+        ReflectionTestUtils.setField(stricterLimit, "id", 12L);
+
+        var first = s.changePosition(stricterLimit, START.plusSeconds(2));
+        assertThat(first.warning()).isTrue();
+        assertThat(first.exceeded()).isTrue();
+        assertThat(s.getAccumulatedIndex()).isEqualByComparingTo("60");
+
+        var duplicate = s.changePosition(stricterLimit, START.plusSeconds(2));
+        assertThat(duplicate.warning()).isFalse();
+        assertThat(duplicate.exceeded()).isFalse();
+    }
+
+    @Test
+    void changePositionRejectsNonOpenSessionsOrInvalidLimits() {
+        var s = open();
+        var otherOrgLimit = new OccupationalLimit(99L, 5L, 1, new BigDecimal("200"), new BigDecimal("0.8"),
+                START, "OTHER", 1L, START);
+        ReflectionTestUtils.setField(otherOrgLimit, "id", 13L);
+        assertThatThrownBy(() -> s.changePosition(otherOrgLimit, START.plusSeconds(1)))
+                .isInstanceOf(DosimetryRuleException.class);
+
+        var futureLimit = new OccupationalLimit(1L, 5L, 1, new BigDecimal("200"), new BigDecimal("0.8"),
+                START.plusSeconds(60), "FUTURE", 1L, START);
+        ReflectionTestUtils.setField(futureLimit, "id", 14L);
+        assertThatThrownBy(() -> s.changePosition(futureLimit, START.plusSeconds(10)))
+                .isInstanceOf(DosimetryRuleException.class);
+
+        s.requestClose(START.plusSeconds(10), START.plusSeconds(10));
+        var validLimit = new OccupationalLimit(1L, 5L, 1, new BigDecimal("200"), new BigDecimal("0.8"),
+                START, "VALID", 1L, START);
+        ReflectionTestUtils.setField(validLimit, "id", 15L);
+        assertThatThrownBy(() -> s.changePosition(validLimit, START.plusSeconds(10)))
+                .isInstanceOf(DosimetryRuleException.class);
+    }
 }

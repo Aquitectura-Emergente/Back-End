@@ -35,7 +35,7 @@ public record OccupationalLimitExceeded(
         BigDecimal dose,
         String unit,
         BigDecimal limit,
-        String limitVersionId,
+        Long limitVersionId,
         String methodId,
         LocalDateTime capturedAt,
         LocalDateTime detectedAt) {
