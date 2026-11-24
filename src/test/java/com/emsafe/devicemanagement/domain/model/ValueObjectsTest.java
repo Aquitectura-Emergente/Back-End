@@ -61,7 +61,7 @@ class ValueObjectsTest {
         assertThatThrownBy(() -> DeviceSerial.of("  ")).isInstanceOf(BadRequestException.class);
         assertThatThrownBy(() -> new SamplingInterval(50)).isInstanceOf(BadRequestException.class);
         assertThatThrownBy(() -> new InactivityTimeout(5)).isInstanceOf(BadRequestException.class);
-        assertThat(SamplingInterval.DEFAULT.duration().toMillis()).isEqualTo(1000);
+        assertThat(SamplingInterval.DEFAULT.duration().toMillis()).isEqualTo(30_000);
     }
 
     @Test

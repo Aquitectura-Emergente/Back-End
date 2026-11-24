@@ -9,6 +9,9 @@ public interface DosimetrySessionGateway {
     /** Jornada del dosímetro que cubre la hora de captura. */
     Optional<String> sessionCovering(Long deviceId, Instant capturedAt);
 
+    /** Operario de la jornada. */
+    Optional<Long> workerOf(String sessionId);
+
     DosimetryResult ingest(String sessionId, DosimetryReading reading);
 
     record DosimetryReading(Long deviceId, String bootId, long sequence, BigDecimal fieldMicrotesla,

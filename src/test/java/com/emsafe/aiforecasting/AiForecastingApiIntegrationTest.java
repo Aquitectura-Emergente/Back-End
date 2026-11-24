@@ -192,8 +192,9 @@ class AiForecastingApiIntegrationTest {
 
     @Test
     void otherContextsUnderApiV1RemainPublic() throws Exception {
-        // La regla nueva es solo para /api/v1/ai-forecasting/**: el resto de /api/v1 sigue permitAll.
-        mvc.perform(get("/api/v1/readings").param("limit", "1")).andExpect(status().isOk());
+        // La regla nueva es solo para /api/v1/ai-forecasting/**: el resto de /api/v1 sigue permitAll en
+        // SecurityConfig. Las lecturas exigen sesión en su propio controlador (403 sin ella, no 401).
+        mvc.perform(get("/api/v1/readings").param("limit", "1")).andExpect(status().isForbidden());
     }
 
     // ─── Autorización ────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package com.emsafe.devicemanagement;
 
 import com.emsafe.clientportal.application.ClientService;
 import com.emsafe.clientportal.interfaces.rest.dto.ClientReadingDto;
+import com.emsafe.devicemanagement.application.DeviceActor;
 import com.emsafe.devicemanagement.application.TelemetryService;
 import com.emsafe.devicemanagement.interfaces.rest.dto.ReadingDto;
 import com.emsafe.devicemanagement.domain.model.ConnectivityStatus;
@@ -108,6 +109,9 @@ class DeviceManagementEndToEndTest {
         assertThat(dosimeter.getDeviceType()).isEqualTo(DeviceType.PERSONAL_DOSIMETER);
         assertThat(dosimeter.organizationId()).isEqualTo(company.getId());
         assertThat(devices.findBySerial(PLUG).orElseThrow().organizationId()).isEqualTo(house.getId());
+        Device homeSensor = devices.findBySerial(DeviceManagementDemoSeeder.HOME_SENSOR).orElseThrow();
+        assertThat(homeSensor.getDeviceType()).isEqualTo(DeviceType.FIXED_SENSOR);
+        assertThat(homeSensor.organizationId()).isEqualTo(house.getId());
         assertThat(edges.findByEdgeNodeId(PLANT_EDGE).orElseThrow().getSegment()).isEqualTo(EdgeSegment.PLANT);
         assertThat(edges.findByEdgeNodeId(HOME_EDGE).orElseThrow().getOrganizationId()).isEqualTo(house.getId());
         assertThat(plantEdges.listFor(company.getId())).extracting(PlantEdgeDto::serialNumber).contains(PLANT_EDGE);
@@ -127,7 +131,7 @@ class DeviceManagementEndToEndTest {
     @Order(2)
     void theIndustrialEdgeExampleLandsInTheDemoSession() {
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
-        router.route("iot/" + DOSIMETER + "/telemetry", bytes(withTime(industrial("telemetry"), now.minusSeconds(2))));
+        router.route("iot/" + DOSIMETER + "/telemetry", bytes(withTime(industrial("telemetry"), now.minusSeconds(31))));
         String saturated = withTime(industrial("telemetry"), now.minusSeconds(1))
                 .replace("\"sequence\": 1234", "\"sequence\": 1235")
                 .replace("\"quality\": \"VALID\"", "\"quality\": \"SATURATED\"");
@@ -210,7 +214,7 @@ class DeviceManagementEndToEndTest {
         assertThat(clients.getDeviceReadings(company.getId(), dosimeter.getId())).extracting(ClientReadingDto::id)
                 .doesNotContain(homeReadingId);
 
-        ReadingDto published = telemetry.list(DOSIMETER, 50).stream()
+        ReadingDto published = telemetry.list(DeviceActor.system("test"), DOSIMETER, 50).stream()
                 .filter(r -> homeReadingId.equals(r.getId())).findFirst().orElseThrow();
         assertThat(published.getClientId()).isEqualTo(house.getId());
     }

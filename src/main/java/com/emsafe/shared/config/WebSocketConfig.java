@@ -1,6 +1,8 @@
 package com.emsafe.shared.config;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
@@ -20,10 +22,20 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
  * Caveat: SimpleBroker fans out within a single instance only (Azure App Service
  * single-instance is fine). Multi-instance would need Redis/Azure SignalR.
  * Remember to enable "Web Sockets" in the Azure App Service configuration.
+ *
+ * El CONNECT exige el JWT y cada SUBSCRIBE se limita a los tópicos del usuario
+ * ({@link StompAuthChannelInterceptor}).
  */
 @Configuration
 @EnableWebSocketMessageBroker
+@RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+    private final StompAuthChannelInterceptor auth;
+
+    @Override
+    public void configureClientInboundChannel(ChannelRegistration registration) {
+        registration.interceptors(auth);
+    }
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
