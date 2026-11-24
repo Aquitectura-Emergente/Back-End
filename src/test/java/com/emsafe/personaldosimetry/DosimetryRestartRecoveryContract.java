@@ -91,7 +91,7 @@ abstract class DosimetryRestartRecoveryContract {
         @Bean DosimetryDirectory directory() {
             return new DosimetryDirectory() {
                 public User userByEmail(String email) { return userById(900001L); }
-                public User userById(Long id) { return new User(id, true, id.equals(900001L), true, id.equals(900001L)); }
+                public User userById(Long id) { return new User(id, true, id.equals(900001L), true, id.equals(900001L), false, false); }
                 public Device deviceById(Long id) { return new Device(id, 900001L, true); }
             };
         }

@@ -194,6 +194,29 @@ abstract class PersonalDosimetryApiContract {
     }
 
     @Test
+    void realPlantAccountsReceiveTheMembershipOfTheirRoleAndOnlyThatOne() throws Exception {
+        var plantWorker = account("plant-worker@pd.test", Role.WORKER, false);
+        var plantSso = account("plant-sso@pd.test", Role.SSO_RESPONSIBLE, false);
+        var technician = account("tech@pd.test", Role.TECHNICIAN, false);
+
+        postAs(ADMIN, "/memberships", new GrantMembership(plantWorker.getId(), company.getId(), MembershipRole.OPERATOR))
+                .andExpect(status().isCreated());
+        postAs(ADMIN, "/memberships", new GrantMembership(plantSso.getId(), company.getId(), MembershipRole.SSO))
+                .andExpect(status().isCreated());
+
+        var crossedWorker = account("crossed-worker@pd.test", Role.WORKER, false);
+        var crossedSso = account("crossed-sso@pd.test", Role.SSO_RESPONSIBLE, false);
+        postAs(ADMIN, "/memberships", new GrantMembership(crossedWorker.getId(), company.getId(), MembershipRole.SSO))
+                .andExpect(status().is4xxClientError());
+        postAs(ADMIN, "/memberships", new GrantMembership(crossedSso.getId(), company.getId(), MembershipRole.OPERATOR))
+                .andExpect(status().is4xxClientError());
+        postAs(ADMIN, "/memberships", new GrantMembership(technician.getId(), company.getId(), MembershipRole.OPERATOR))
+                .andExpect(status().is4xxClientError());
+        assertThat(memberships.findById(crossedWorker.getId())).isEmpty();
+        assertThat(memberships.findById(technician.getId())).isEmpty();
+    }
+
+    @Test
     void workerAndDosimeterMustBelongToSameCompany() throws Exception {
         var otherWorker = account("other-worker@pd.test", Role.CLIENT, false);
         memberships.save(new DosimetryMembership(otherWorker.getId(), otherCompany.getId(), MembershipRole.OPERATOR,
