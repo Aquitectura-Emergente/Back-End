@@ -13,11 +13,20 @@ import com.emsafe.personaldosimetry.application.ExposureQueryFacade;
 import com.emsafe.personaldosimetry.application.ExposureQueryFacade.ClosedSession;
 import com.emsafe.personaldosimetry.infrastructure.DosimetryOutboxRelay;
 import com.emsafe.plantconfiguration.application.JobPositionService;
+import com.jayway.jsonpath.JsonPath;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -28,6 +37,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasItem;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * La semilla de demo de punta a punta, con seed-demo=true: corre al arrancar sobre los datos de
@@ -35,7 +49,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Dosimetry, y después el relay de Personal Dosimetry alimenta a AI Forecasting como en producción.
  */
 @SpringBootTest
+@AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:af_demo_seed;DB_CLOSE_DELAY=-1;NON_KEYWORDS=VALUE",
         "spring.datasource.driver-class-name=org.h2.Driver",
@@ -59,6 +75,20 @@ class AiForecastingDemoSeederTest {
     @Autowired private AnalyticsSummaryQueryHandler analytics;
     @Autowired private AlarmService alarms;
     @Autowired private AlertEscalationJob escalation;
+    @Autowired private MockMvc mvc;
+
+    private static final String PD = "/api/v1/personal-dosimetry";
+
+    private String ssoToken() throws Exception {
+        String body = mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + DemoExposurePlan.SSO_EMAIL + "\",\"password\":\"sso12345\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        return JsonPath.read(body, "$.data.token");
+    }
+
+    private static MockHttpServletRequestBuilder as(String token, MockHttpServletRequestBuilder request) {
+        return request.header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+    }
 
     private long org() {
         return users.findByEmail(DemoExposurePlan.COMPANY_EMAIL).orElseThrow().getId();
@@ -147,6 +177,49 @@ class AiForecastingDemoSeederTest {
                 Map.entry(workers.get(0), CriticalityLevel.HIGH));
         assertThat(s.projectedCriticalWorkers()).extracting(AnalyticsSummary.ProjectedCritical::workerId)
                 .containsExactly(workers.get(1), workers.get(0));
+    }
+
+    /**
+     * La membresía SSO sembrada deja al responsable de Quantum operar como en el portal: las llamadas
+     * de la pantalla /sso/exposure (sus operarios, sus jornadas y lecturas) y abrir y cerrar jornadas.
+     * Va al final porque cierra y reabre la jornada de un operario.
+     */
+    @Test
+    @Order(Integer.MAX_VALUE)
+    void theQuantumSsoCanReadExposureAndOpenAndCloseSessions() throws Exception {
+        long org = org();
+        String token = ssoToken();
+        DemoExposurePlan.Worker w = DemoExposurePlan.WORKERS.get(2); // operario4: sin avisos, sin evaluación
+        long workerId = users.findByEmail(w.email()).orElseThrow().getId();
+        String seeded = exposures.currentExposure(org, workerId).orElseThrow().sessionId();
+
+        // lo que pide la pantalla /sso/exposure del portal
+        mvc.perform(as(token, get("/api/sso/workers"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[*].email", hasItem(w.email())));
+        mvc.perform(as(token, get(PD + "/workers/" + workerId + "/sessions"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[*].id", hasItem(seeded)));
+        String detail = mvc.perform(as(token, get(PD + "/sessions/" + seeded))).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        mvc.perform(as(token, get(PD + "/sessions/" + seeded + "/readings"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1));
+
+        // cerrar la jornada sembrada y abrir otra con el mismo dosímetro y puesto
+        mvc.perform(as(token, post(PD + "/sessions/" + seeded + "/close"))).andExpect(status().is2xxSuccessful())
+                .andExpect(jsonPath("$.data.state").value("CLOSING"));
+        Number deviceId = JsonPath.read(detail, "$.data.deviceId");
+        Number positionId = JsonPath.read(detail, "$.data.jobPositionId");
+        String opened = mvc.perform(as(token, post(PD + "/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"workerId\":%d,\"deviceId\":%d,\"jobPositionId\":%d}"
+                                .formatted(workerId, deviceId.longValue(), positionId.longValue()))))
+                .andExpect(status().is2xxSuccessful())
+                .andExpect(jsonPath("$.data.state").value("OPEN"))
+                .andReturn().getResponse().getContentAsString();
+        String newId = JsonPath.read(opened, "$.data.id");
+        mvc.perform(as(token, post(PD + "/sessions/" + newId + "/close"))).andExpect(status().is2xxSuccessful());
+
+        // conceder otra vez la membresía (otro arranque) no falla ni la cambia
+        seeder.seed();
+        mvc.perform(as(token, get(PD + "/sessions/" + newId))).andExpect(status().isOk());
     }
 
     @Test

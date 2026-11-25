@@ -35,6 +35,8 @@ final class DemoExposurePlan {
 
     static final String COMPANY_EMAIL = "ops@quantumdyn.com";
     static final String ADMIN_EMAIL = "admin@emsafe.com";
+    /** El SSO_RESPONSIBLE de Quantum que siembra DataInitializer; recibe la membresía SSO de dosimetría. */
+    static final String SSO_EMAIL = "sso@quantumdyn.com";
     static final String WORKER_PASSWORD = "worker123";
     static final ZoneId ZONE = ZoneId.of("America/Lima");
     static final LocalTime SHIFT_START = LocalTime.of(8, 0);
