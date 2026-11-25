@@ -62,8 +62,9 @@ import java.util.Set;
  *       repositorio, igual que DataInitializer y el seeder de Device Management).</li>
  *   <li>Plant Configuration ({@link PlantZoneService}, {@link JobPositionService}): una zona y 3 puestos.</li>
  *   <li>Device Management ({@link DeviceService}, {@link DeviceCatalog}): un dosímetro personal por operario.</li>
- *   <li>Personal Dosimetry ({@link PersonalDosimetryService}, {@link ExposureQueryFacade}): membresías,
- *       límites, 60 jornadas cerradas y una abierta por operario.</li>
+ *   <li>Personal Dosimetry ({@link PersonalDosimetryService}, {@link ExposureQueryFacade}): membresías
+ *       OPERATOR de los operarios y SSO del responsable de Quantum, límites, 60 jornadas cerradas y una
+ *       abierta por operario.</li>
  * </ul>
  *
  * <p>AI Forecasting y Occupational Health reciben los hechos por el relay de Personal Dosimetry, como
@@ -150,6 +151,7 @@ public class AiForecastingDemoSeeder {
         Instant now = clock.instant();
         DosimetryActor actor = new DosimetryActor(admin.getId(), true, null, null);
 
+        grantSsoMembership(actor, org);
         List<Long> positionIds = ensurePositions(org);
         ensureLimits(actor, org, positionIds, DemoExposurePlan.historyStart(now).minus(Duration.ofDays(1)));
         List<Participant> participants = ensureParticipants(actor, org, positionIds);
@@ -181,6 +183,27 @@ public class AiForecastingDemoSeeder {
 
     /** Un operario del guion listo para trabajar: cuenta, dosímetro y puesto resueltos. */
     record Participant(int index, String email, Long workerId, Long deviceId, Long positionId) {
+    }
+
+    /**
+     * Membresía SSO de Personal Dosimetry para el SSO_RESPONSIBLE de Quantum, para que desde el portal
+     * pueda abrir, cerrar y consultar jornadas de su empresa. Idempotente: concederla otra vez con la
+     * misma organización y rol no hace nada. No crea la cuenta (es de DataInitializer). En producción
+     * la concede un ADMIN con {@code POST /api/v1/personal-dosimetry/memberships}.
+     */
+    private void grantSsoMembership(DosimetryActor actor, Long org) {
+        AppUser sso = users.findByEmail(DemoExposurePlan.SSO_EMAIL).orElse(null);
+        if (sso == null || !sso.hasRole(Role.SSO_RESPONSIBLE) || !sso.belongsTo(org) || !sso.isActive()) {
+            log.warn("AI Forecasting demo seed: {} is not an active SSO_RESPONSIBLE of organization {}; "
+                    + "no SSO dosimetry membership granted", DemoExposurePlan.SSO_EMAIL, org);
+            return;
+        }
+        try {
+            dosimetry.grantMembership(actor, new GrantMembership(sso.getId(), org, MembershipRole.SSO));
+        } catch (RuntimeException e) {
+            log.warn("AI Forecasting demo seed: SSO dosimetry membership for {} not granted: {}",
+                    DemoExposurePlan.SSO_EMAIL, e.toString());
+        }
     }
 
     private List<Long> ensurePositions(Long org) {

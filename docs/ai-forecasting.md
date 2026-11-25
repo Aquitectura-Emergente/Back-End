@@ -631,8 +631,18 @@ otros contextos**: todo pasa por sus servicios públicos, con las mismas reglas 
 | IAM | `UserRepository` (como `DataInitializer`), clave con el `PasswordEncoder` | `operario3/4/5@quantumdyn.com`, WORKER activos de Quantum, clave `worker123`. Usa también `operario1`. Si un email existe con otro rol u organización, se salta |
 | Plant Configuration | `PlantZoneService`, `JobPositionService` | Zona "Planta AF demo" y puestos Prensa hidráulica, Soldadura e Inspección de calidad |
 | Device Management | `DeviceCatalog`, `DeviceService.create` | Un `PERSONAL_DOSIMETER` por operario (`AF-DEMO-DOS-01..04`) |
-| Personal Dosimetry | `PersonalDosimetryService` (actor ADMIN), `ExposureQueryFacade` | Membresías OPERATOR, límite 12000 uT·s con advertencia 0.8, **60 jornadas cerradas** (15 días hábiles de las últimas 3 semanas × 4 operarios, 08:00–16:00 de Lima) y **una abierta hoy** por operario, iniciada hace 4 h |
+| Personal Dosimetry | `PersonalDosimetryService` (actor ADMIN), `ExposureQueryFacade` | Membresías OPERATOR de los operarios y **SSO de `sso@quantumdyn.com`**, límite 12000 uT·s con advertencia 0.8, **60 jornadas cerradas** (15 días hábiles de las últimas 3 semanas × 4 operarios, 08:00–16:00 de Lima) y **una abierta hoy** por operario, iniciada hace 4 h |
 | Alerts | `AlarmService.forWorker`, `acknowledgeAs`, `resolve` | Acusa y resuelve las alertas de las jornadas del historial |
+
+**Membresía SSO.** Con ella, el SSO de Quantum (`sso@quantumdyn.com` / `sso12345`) puede usar desde
+el portal la pantalla `/sso/exposure` (`GET /api/sso/workers`, `GET .../workers/{id}/sessions`,
+`GET .../sessions/{id}/readings`) y abrir y cerrar jornadas de sus operarios (`POST .../sessions`,
+`POST .../sessions/{id}/close`). Sin ella, Personal Dosimetry le responde 403 aunque su rol en IAM
+sea SSO_RESPONSIBLE. Es idempotente: concederla otra vez con la misma organización y rol no cambia
+nada; si la cuenta no es un SSO_RESPONSIBLE activo de Quantum, se avisa en el log y se salta. **En
+producción no hay semilla: la membresía la concede un ADMIN** con
+`POST /api/v1/personal-dosimetry/memberships` y el cuerpo
+`{"userId": <id del SSO>, "organizationId": <id de la empresa>, "role": "SSO"}`.
 
 El guion deja 9 jornadas sobre la advertencia, 2 cerca del límite, **una sola excedencia** y una
 con cobertura incompleta. Hoy, operario1 y operario3 quedan sobre la advertencia: AI Forecasting
