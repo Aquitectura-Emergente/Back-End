@@ -21,7 +21,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/ai-forecasting/outbox")
 @Tag(name = "AI Forecasting - Outbox",
-        description = "Eventos salientes (RotationSuggested, PredictiveRiskDetected) pendientes de publicar. Solo ADMIN.")
+        description = "Eventos salientes con publishedAt nulo. RotationSuggested lo entrega el relay a Occupational "
+                + "Health; PredictiveRiskDetected es interno (sin consumidor): el relay lo marca sin publicarlo. "
+                + "Solo ADMIN.")
 @PreAuthorize("hasRole('ADMIN')")
 public class AiForecastingOutboxController {
 

@@ -115,6 +115,13 @@ public class AiForecastingConfiguration {
             log.info("AI Forecasting: LLM disabled, using template redaction");
             return new FallbackOnlyRedactionAdapter(fallback, clock);
         }
+        // La clave se lee una sola vez al arrancar: sin ella, Gemini nunca se podría llamar. Se avisa
+        // aquí una vez (y no en cada evaluación) y se usa la plantilla directamente.
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("AI Forecasting: emsafe.ai-forecasting.llm.enabled=true but gemini.api-key is empty "
+                    + "(GEMINI_API_KEY); using template redaction");
+            return new FallbackOnlyRedactionAdapter(fallback, clock);
+        }
         log.info("AI Forecasting: Gemini redaction enabled (model {}, timeout {} ms)",
                 model, properties.getLlm().getTimeoutMs());
         return new GeminiRedactionAdapter(
