@@ -7,7 +7,8 @@ natural, con Gemini o con una plantilla.
 
 Este contexto **no decide** si un operario excedió su límite: esa decisión es de Personal Dosimetry.
 Tampoco ejecuta recomendaciones: las publica para Occupational Health, donde decide el SSO.
-Todo lo que produce es una proyección (`isProjection = true`).
+Toda evaluación es una proyección (`isProjection = true`). El resumen analítico combina el
+histórico medido por Personal Dosimetry (`isProjection = false`) con las proyecciones vigentes.
 
 La exposición es un índice acumulado en **uT·s** (`MAGNETIC_TIME_INDEX_V1`), no una dosis.
 
@@ -16,23 +17,30 @@ La exposición es un índice acumulado en **uT·s** (`MAGNETIC_TIME_INDEX_V1`), 
 - [Modelo](#modelo)
 - [Reglas de cálculo](#reglas-de-cálculo)
 - [API](#api)
+- [Analítica](#analítica)
 - [Eventos salientes](#eventos-salientes)
 - [Propiedades](#propiedades)
 - [Persistencia](#persistencia)
 - [Prueba manual en Swagger](#prueba-manual-en-swagger)
 - [Pruebas automatizadas](#pruebas-automatizadas)
-- [Integración pendiente](#integración-pendiente)
+- [Semilla de demo](#semilla-de-demo)
+- [Gemini y variables de entorno](#gemini-y-variables-de-entorno)
+- [Integración con otros contextos](#integración-con-otros-contextos)
+- [Pendientes conocidos](#pendientes-conocidos)
 
 ## Modelo
 
 ### Snapshot de exposición (modelo de lectura local)
 
-`af_worker_exposure_snapshot` guarda una fila por sesión abierta, con estos campos:
+`af_worker_exposure_snapshot` guarda una fila por sesión, con estos campos:
 `organizationId`, `workerId`, `sessionId`, `zoneId`, `positionId`, `accumulatedIndex`,
-`limitIndex`, `sessionStartedAt`, `plannedShiftEnd`, `capturedAt` y `updatedAt`.
+`limitIndex`, `sessionStartedAt`, `plannedShiftEnd`, `capturedAt` y `updatedAt`. La fila no se
+borra al cerrar la jornada, y su índice es el del último aviso, no el final: el índice final se
+lee de Personal Dosimetry (ver [Analítica](#analítica)).
 
-Existe porque ningún contexto entrega hoy todos los datos que necesita la proyección. Se alimenta
-por el inbox (`exposure-snapshot`, `exposure-warning-raised` y `shift-updated`) con estas reglas:
+Existe porque ningún contexto entrega todos los datos que necesita la proyección. Se alimenta en
+proceso (ver [Integración](#integración-con-otros-contextos)) y, para pruebas, por el inbox REST
+(`exposure-snapshot`, `exposure-warning-raised` y `shift-updated`), con estas reglas:
 
 - **Gana la captura más reciente.** Un snapshot o aviso con `capturedAt` anterior al guardado no
   sobrescribe el índice.
@@ -142,8 +150,10 @@ El motivo (`reason`) de la recomendación contiene solo IDs.
     nunca nombres ni datos personales.
   - La key viaja en la cabecera `x-goog-api-key`, no en la URL.
 - **Fallback.** `FallbackMessagePolicy` genera un texto con plantilla fija y las cifras. Se usa con
-  el LLM deshabilitado (valor por defecto), cuando no hay key, ante error o timeout, o si la
-  respuesta viene vacía.
+  el LLM deshabilitado (valor por defecto), ante error o timeout, o si la respuesta viene vacía.
+- **Sin key.** Con `llm.enabled=true` y `gemini.api-key` vacía, la aplicación arranca, avisa **una
+  vez** en el log (`llm.enabled=true but gemini.api-key is empty`) y usa directamente la
+  plantilla (`FallbackOnlyRedactionAdapter`). Ver [Gemini](#gemini-y-variables-de-entorno).
 - **La evaluación nunca falla por el LLM.** El campo `redaction.generatedBy` indica el origen:
   `LLM` o `FALLBACK`.
 
@@ -161,6 +171,7 @@ Prefijo: `/api/v1/ai-forecasting`. Todas las respuestas usan `ApiResponse` (`suc
 | GET | `/assessments?organizationId&workerId&sessionId&from&to&page&size` | ADMIN u organización dueña | Búsqueda paginada, más recientes primero | 400, 403 |
 | GET | `/projections/workers/{workerId}` | ADMIN u organización dueña | Evaluación activa del operario | 403, 404 |
 | GET | `/projections/critical-workers?organizationId&minCriticality&page&size` | ADMIN u organización dueña | Evaluaciones activas por criticidad descendente y luego por `estimatedExceedanceAt` ascendente (sin excedencia al final) | 400, 403 |
+| GET | `/analytics/organizations/{organizationId}/summary?from&to&zone` | ADMIN u organización dueña | Resumen del histórico de jornadas y críticos proyectados (ver [Analítica](#analítica)) | 400, 403 |
 | GET | `/outbox?page&size` | ADMIN | Eventos pendientes (`publishedAt` nulo), los más antiguos primero | 400, 403 |
 | POST | `/outbox/{eventId}/ack` | ADMIN | Marca un evento como publicado (idempotente) | 403, 404 |
 
@@ -176,13 +187,27 @@ Detalles de los parámetros:
 
 ### Acceso
 
-| Rol | Inbox y outbox | Consultas |
-| --- | --- | --- |
-| ADMIN | sí | todas las organizaciones |
-| CLIENT con `clientType = company` | no | solo su organización (`organizationId` = id de su usuario) |
-| Otros (TECHNICIAN, CLIENT individual) | no | no |
+"Consultas" son `assessments`, `projections` y `analytics`.
 
-Todo el control de acceso está en `ForecastingAccessPolicy`. La política se aplica en tres capas:
+| Rol | Organización que representa | Inbox y outbox | Consultas |
+| --- | --- | --- | --- |
+| ADMIN | ninguna (ve todas) | sí | todas las organizaciones |
+| CLIENT con `clientType = company` | el id de su propio usuario | no | solo su organización |
+| SSO_RESPONSIBLE | `users.organization_id` (docs/iam.md §3) | no | solo su organización |
+| SSO_RESPONSIBLE con `organization_id` nulo | ninguna | no | no (403, nunca 500) |
+| WORKER, TECHNICIAN, CLIENT individual | ninguna | no | no (403) |
+
+- **Organización por parámetro.** Si el endpoint recibe `organizationId` (`assessments`,
+  `critical-workers`) o lo lleva en la ruta (`analytics`), quien no es ADMIN solo puede usar el
+  suyo; otro valor da 403. Si lo omite donde es opcional, se usa el suyo, nunca "todas".
+- **Detalle por id.** `assessments/{id}` y `projections/workers/{workerId}` dan 403 si la
+  evaluación es de otra organización. Un id inexistente da 404 antes de mirar la organización
+  (ver [Pendientes](#pendientes-conocidos)).
+- **WORKER.** Aunque tiene organización en IAM, no representa a ninguna aquí: las evaluaciones son
+  de la organización, no del operario.
+
+`IamForecastingActorDirectory` traduce la cuenta a la organización que representa y
+`ForecastingAccessPolicy` decide solo con esa organización. La política se aplica en tres capas:
 
 1. `SecurityConfig` exige un JWT válido en `/api/v1/ai-forecasting/**`.
 2. Un `HandlerInterceptor` exige ADMIN en inbox y outbox **antes** de leer el cuerpo. Así, un
@@ -194,7 +219,7 @@ Todo el control de acceso está en `ForecastingAccessPolicy`. La política se ap
 
 | Código | Cuándo |
 | --- | --- |
-| 400 | JSON mal formado; campo obligatorio ausente; más de 6 decimales en un índice; fecha o enum inválidos; `page` o `size` fuera de rango; `critical-workers` sin `organizationId` para ADMIN |
+| 400 | JSON mal formado; campo obligatorio ausente; más de 6 decimales en un índice; fecha o enum inválidos; `page` o `size` fuera de rango; `critical-workers` sin `organizationId` para ADMIN; en `analytics`, zona inválida, `from` posterior a `to` o periodo de más de 366 días |
 | 403 | Sin token, token inválido o fuera de ámbito (el proyecto responde 403 en todos estos casos) |
 | 404 | La evaluación, la evaluación activa del operario o el evento del outbox no existen |
 | 409 | Aviso o cambio de turno de una sesión sin snapshot; sesión de otro operario u organización; escrituras concurrentes sobre la misma sesión o evento |
@@ -204,10 +229,120 @@ Los DTOs solo validan formato y presencia (`400`); las reglas de dominio respond
 `AiForecastingExceptionHandler`, acotado al paquete, traduce `422`, `409` y los errores de formato;
 `404` y `403` los resuelve `GlobalExceptionHandler`.
 
+## Analítica
+
+`GET /api/v1/ai-forecasting/analytics/organizations/{organizationId}/summary?from=&to=&zone=`,
+de solo lectura y con el mismo [acceso](#acceso) que las consultas.
+
+### Parámetros
+
+| Parámetro | Por defecto | Regla |
+| --- | --- | --- |
+| `from` | `to` − 27 días | Fecha ISO (`2026-11-02`), primer día **inclusivo** en `zone` |
+| `to` | hoy en `zone` | Último día **inclusivo** en `zone` |
+| `zone` | `America/Lima` | Zona IANA; interpreta `from`/`to` y agrupa por semana. Inválida → 400 |
+
+`from` posterior a `to`, o más de 366 días, responde 400. El acceso se comprueba antes de validar
+el periodo y la zona (un formato de fecha mal escrito sí da 400 antes, al convertir el parámetro).
+
+### De dónde sale cada dato
+
+| Sección | Fuente | Nota |
+| --- | --- | --- |
+| `totals`, `perWorker`, `weeklyTrend`, `topPositions`, `workersAboveWarning` | `ExposureQueryFacade.closedSessions` (Personal Dosimetry): jornadas `CLOSED` con `endedAt` en el periodo | Dato medido. Las banderas de advertencia y excedencia son las de Personal Dosimetry |
+| `topPositions[].positionName` | `JobPositionService.listFor` (Plant Configuration) | Si falla o no lo conoce, el nombre queda nulo y la respuesta no falla |
+| `projectedCriticalWorkers` | Evaluaciones activas HIGH/CRITICAL de este contexto | Foto de **ahora**, no depende del periodo. Excluye las de jornadas que ya cerraron en Personal Dosimetry |
+| `recommendations` | Evaluaciones con `assessedAt` en el periodo | Por jornada cuenta solo la evaluación más reciente |
+
+Reglas:
+
+- **Cerca del límite:** índice final ≥ `near-limit-ratio` × límite (0.90 por defecto; incluye las
+  excedidas).
+- **Semana:** semana ISO (`2026-W47`) de `endedAt` en `zone`. Se listan todas las semanas del
+  periodo, también las vacías.
+- **Puestos:** hasta 10, por índice final promedio descendente.
+- **Índices** con escala 6 (uT·s); **porcentajes** con 2 decimales.
+- Las jornadas `CLOSING` no entran: todavía pueden cambiar. No requiere migración.
+
+### Campos nulos
+
+El `ObjectMapper` del proyecto es `non_null`: **un campo nulo no aparece en el JSON**. El cliente
+debe tratar la ausencia como `null`. Pasa con `positionName` desconocido, con
+`sessionsNearLimitPct` y `sessionsExceededPct` sin jornadas, con `avgFinalIndex` y
+`maxFinalIndex` de una semana vacía, con `estimatedExceedanceAt` sin excedencia proyectada y con
+`targetWorkerId` en una reprogramación.
+
+### Ejemplo
+
+Organización Quantum (`8`) con la [semilla de demo](#semilla-de-demo); listas recortadas y cifras
+ilustrativas:
+
+```json
+{
+  "success": true,
+  "data": {
+    "organizationId": 8,
+    "from": "2026-11-04",
+    "to": "2026-11-25",
+    "zone": "America/Lima",
+    "unit": "uT*s",
+    "methodId": "MAGNETIC_TIME_INDEX_V1",
+    "isProjection": false,
+    "generatedAt": "2026-11-25T15:00:00.000000Z",
+    "totals": {
+      "closedSessions": 60, "workers": 4, "sessionsAboveWarning": 9,
+      "sessionsNearLimit": 2, "sessionsNearLimitPct": 3.33,
+      "sessionsExceeded": 1, "sessionsExceededPct": 1.67,
+      "incompleteCoverageSessions": 1, "nearLimitRatio": 0.90
+    },
+    "perWorker": [
+      { "workerId": 14, "sessions": 15, "avgFinalIndex": 9728.000000, "maxFinalIndex": 12360.000000,
+        "maxRatio": 1.030000, "sessionsAboveWarning": 7, "sessionsNearLimit": 1, "sessionsExceeded": 1 }
+    ],
+    "weeklyTrend": [
+      { "isoWeek": "2026-W48", "weekStart": "2026-11-23", "sessions": 8,
+        "avgFinalIndex": 6600.000000, "maxFinalIndex": 10560.000000, "sessionsNearLimit": 0, "sessionsExceeded": 0 }
+    ],
+    "topPositions": [
+      { "positionId": 31, "positionName": "Prensa hidráulica", "sessions": 15,
+        "avgFinalIndex": 9728.000000, "maxFinalIndex": 12360.000000 }
+    ],
+    "workersAboveWarning": [
+      { "workerId": 14, "sessionsAboveWarning": 7, "lastAt": "2026-11-24T21:00:00Z" }
+    ],
+    "projectedCriticalWorkers": [
+      { "assessmentId": "…", "workerId": 41, "sessionId": "…", "criticality": "CRITICAL",
+        "currentIndex": 10900.000000, "projectedIndex": 21891.000000, "limitIndex": 12000.000000,
+        "projectedRatio": 1.824250, "estimatedExceedanceAt": "2026-11-25T16:47:00Z",
+        "recommendationType": "RESCHEDULE_TASK", "isProjection": true }
+    ],
+    "recommendations": { "rotation": 0, "rescheduleTask": 6, "estimatedBenefitIndex": 61234.000000 }
+  }
+}
+```
+
+### Para qué sirve cada parte
+
+| Parte | Reporte | Pantalla del SSO |
+| --- | --- | --- |
+| `totals` | Resumen ejecutivo | Tarjetas de indicadores |
+| `weeklyTrend` | Tabla y gráfico | Gráfico de línea |
+| `perWorker`, `topPositions` | Tablas | Tabla ordenable y barras |
+| `workersAboveWarning` | Sí | Lista con enlace al operario |
+| `projectedCriticalWorkers` | Opcional (foto del momento) | Principal |
+| `recommendations`, `incompleteCoverageSessions` | Efecto de la IA y calidad del dato | Secundario |
+
 ## Eventos salientes
 
-Se escriben en `af_outbox` en la misma transacción que el cambio de estado del agregado. Se leen con
-`GET /outbox` y se confirman con `POST /outbox/{eventId}/ack`.
+Se escriben en `af_outbox` en la misma transacción que el cambio de estado del agregado.
+`ForecastingOutboxRelay` los despacha en proceso cada 30 s. También se pueden leer con
+`GET /outbox` y confirmar con `POST /outbox/{eventId}/ack`.
+
+| Evento | Qué hace el relay | Significado de `publishedAt` |
+| --- | --- | --- |
+| `RotationSuggested` | Lo publica en proceso como `occupationalhealth...inbound.RotationSuggested`, conservando `eventId` y `correlationId` | Entregado. Si la entrega falla, queda pendiente y se reintenta; el inbox de OH deduplica por `eventId` |
+| `PredictiveRiskDetected` | **No lo publica**: es un hecho interno (`ForecastingOutboxRelay.INTERNAL_EVENT_TYPES`) | "Despachado sin consumidor". Se marca para que no encabece la cola para siempre; el evento sigue entero en `af_outbox` |
+| Cualquier otro tipo | No lo marca y avisa en el log | Queda nulo (pendiente) |
 
 ### Sobre común
 
@@ -247,9 +382,20 @@ coincide con `RotationSuggestedInput` del inbox de Occupational Health
   ausencia como `null`.
 - **`candidateWorkerIds`** queda vacío cuando la recomendación es `RESCHEDULE_TASK`.
 
-### `PredictiveRiskDetected`
+### `PredictiveRiskDetected` (interno)
 
-Se emite con criticidad HIGH o CRITICAL:
+Se emite con criticidad HIGH o CRITICAL, siempre junto con un `RotationSuggested` de la misma
+evaluación. Es un **evento interno, fuera de alcance como integración**: queda en `af_outbox` como
+registro de dominio, pero ningún contexto lo consume. No se convierte en alerta a propósito:
+
+- **Evitar el aviso duplicado.** Proviene del mismo `ExposureWarningRaised` de Personal Dosimetry
+  (`causationId`), por el que Occupational Health ya crea la alerta `warning` (que también le
+  llega al SSO por `/topic/organizations/{id}/alerts`). Una alerta predictiva sería la segunda
+  por la misma jornada y el mismo instante.
+- **Lo accionable ya llega.** Viaja en `RotationSuggested`, que abre la propuesta de mitigación.
+- **El riesgo predictivo se consulta**, no se notifica: `critical-workers` y `analytics`.
+
+Payload:
 
 ```json
 {
@@ -278,15 +424,14 @@ rango impide arrancar la aplicación.
 | `emsafe.ai-forecasting.critical-margin-ratio` | `0.10` | Margen crítico de CRITICAL y HIGH |
 | `emsafe.ai-forecasting.moderate-projected-ratio` | `0.90` | Umbral de MODERATE |
 | `emsafe.ai-forecasting.safe-candidate-ratio` | `0.90` | Techo del candidato de rotación |
+| `emsafe.ai-forecasting.near-limit-ratio` | `0.90` | Analítica: jornada "cerca del límite" si índice final ≥ ratio × límite |
 | `emsafe.ai-forecasting.model-id` | `LINEAR_RATE` | Se guarda en cada evaluación |
 | `emsafe.ai-forecasting.model-version` | `1` | Código resultante: `LINEAR_RATE_V1` |
 | `emsafe.ai-forecasting.llm.enabled` | `false` | `false` = solo plantilla, sin red (siempre en tests) |
 | `emsafe.ai-forecasting.llm.timeout-ms` | `5000` | Timeout de conexión y de lectura con Gemini |
-| `emsafe.ai-forecasting.seed-demo` | `false` | Crea 5 operarios de demostración al arrancar |
-
-El seeder de demostración usa la primera cuenta CLIENT `company` (la de menor id). Crea 5
-snapshots en la zona `DEMO-ZONE-A`, con tasas de 0.5, 0.35, 0.2, 0.1 y 0.05 uT·s/s. Pasa por el
-mismo handler del inbox, así que reiniciar el mismo día no tiene efecto.
+| `emsafe.ai-forecasting.seed-demo` | `false` | [Semilla de demo](#semilla-de-demo) de Quantum. Nunca en producción |
+| `emsafe.ai-forecasting.outbox-relay-enabled` | `true` | Relay de `af_outbox` (`false` en el perfil de test) |
+| `emsafe.ai-forecasting.outbox-relay-delay-ms` | `30000` | Pausa entre pasadas del relay |
 
 ## Persistencia
 
@@ -301,6 +446,10 @@ La migración es `V18__ai_forecasting.sql` (MySQL) y todas sus tablas llevan el 
 
 Los índices en uT·s se guardan como `DECIMAL(38,6)` y las fechas como `DATETIME(6)`. Los enums se
 guardan como `VARCHAR`, no como `ENUM` de MySQL, para que agregar un valor no requiera migración.
+
+La analítica, el acceso del SSO y la semilla de demo **no agregaron migraciones**: el histórico se
+lee de Personal Dosimetry por su fachada. En `develop`, V18 ya se aplica en orden después de las
+migraciones de los demás contextos (hoy la última es V29).
 
 ## Prueba manual en Swagger
 
@@ -427,6 +576,8 @@ otra organización, y repite `GET /assessments/{assessmentId}`: responde `403`.
 
 ### 5. Outbox
 
+El relay despacha el outbox cada 30 s, así que los eventos dejan de estar pendientes enseguida. Para
+verlos, arranca con `--emsafe.ai-forecasting.outbox-relay-enabled=false`. Con el relay apagado,
 `GET /api/v1/ai-forecasting/outbox` lista 4 eventos pendientes, en este orden:
 
 1. `RotationSuggested` del 101, con `candidateWorkerIds: [200]` y
@@ -448,108 +599,135 @@ En `POST /api/v1/ai-forecasting/outbox/{eventId}/ack`, con el `eventId` del prim
 
 ## Pruebas automatizadas
 
-```bash
-JAVA_HOME="C:/Program Files/Java/jdk-17" ./mvnw test
+Con JDK 17 (con JDK 23 o superior Lombok no se ejecuta). En PowerShell:
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-17.0.21.9-hotspot'   # o la ruta de tu JDK 17
+.\mvnw.cmd clean test
 ```
 
 | Capa | Clases |
 | --- | --- |
-| Dominio (sin Spring) | `ExposureProjectionServiceTest`, `RotationCandidateSelectorTest`, `CriticalityAssessmentServiceTest`, `RotationRecommendationServiceTest`, `PreventiveAssessmentTest`, `FallbackMessagePolicyTest`, `WorkerExposureSnapshotTest`, `AssessmentPriorityTest`, `ValueObjectsTest` y `DomainPurityTest` (falla si el dominio importa Spring, JPA o Lombok) |
-| Aplicación, con fakes en memoria | `TriggerAssessmentHandlerTest`, `UpsertExposureSnapshotHandlerTest`, `ShiftUpdatedHandlerTest`, `QueryHandlersTest`, `OutboxHandlersTest`, `ForecastingAccessPolicyTest` |
-| Infraestructura | `AiForecastingPersistenceTest` (`@DataJpaTest` sobre H2), `GeminiRedactionAdapterTest` (`MockRestServiceServer`: éxito, timeout, vacío, error), `ForecastingPropertiesTest`, `AiForecastingDemoSeederTest` |
-| REST | `AiForecastingControllerTest` (contrato web y Swagger) y `AiForecastingApiIntegrationTest` (JWT real por login: acceso, flujo, contrato de Occupational Health, ack, duplicados y 400/404/409/422) |
+| Dominio (sin Spring) | `ExposureProjectionServiceTest`, `RotationCandidateSelectorTest`, `CriticalityAssessmentServiceTest`, `RotationRecommendationServiceTest`, `PreventiveAssessmentTest`, `FallbackMessagePolicyTest`, `WorkerExposureSnapshotTest`, `AssessmentPriorityTest`, `ValueObjectsTest`, `ExposureAnalyticsCalculatorTest` y `DomainPurityTest` (falla si el dominio importa Spring, JPA o Lombok) |
+| Aplicación, con fakes en memoria | `TriggerAssessmentHandlerTest`, `UpsertExposureSnapshotHandlerTest`, `ShiftUpdatedHandlerTest`, `QueryHandlersTest`, `OutboxHandlersTest`, `ForecastingAccessPolicyTest` (incluye SSO), `AnalyticsSummaryQueryHandlerTest` |
+| Infraestructura | `AiForecastingPersistenceTest` (`@DataJpaTest` sobre H2), `GeminiRedactionAdapterTest` (`MockRestServiceServer`: éxito, timeout, vacío, error), `NaturalLanguagePortWiringTest` (qué adaptador según `llm.enabled` y la key), `ForecastingOutboxRelayTest`, `IamForecastingActorDirectoryTest`, `AnalyticsAdaptersTest`, `ShiftUpdatedEventListenerTest`, `ForecastingPropertiesTest`, `DemoExposurePlanTest`, `AiForecastingDemoSeederTest` (semilla de punta a punta con el relay de Personal Dosimetry, alertas y escalamiento) |
+| REST | `AiForecastingControllerTest` (contrato web y Swagger), `AiForecastingApiIntegrationTest` (JWT real por login: acceso por rol incluido SSO y WORKER, flujo, contrato de Occupational Health, ack, duplicados y 400/404/409/422) y `AiForecastingAnalyticsApiTest` (analítica con JWT real) |
+
+Fuera del paquete, `ExposureQueryFacadeTest` y `ExposureSessionRepositoryEndedBetweenTest` (Personal
+Dosimetry) cubren la fachada `closedSessions` que usa la analítica.
 
 La correspondencia entre la migración V18 y las entidades se verificó arrancando con el perfil
 `dev` contra MySQL 8 y `ddl-auto=validate`.
 
-## Integración pendiente
+## Semilla de demo
 
-Este contexto compila y funciona sin Personal Dosimetry, Occupational Health ni la rama
-`feature/iam`. Al integrarlos, estos son los puntos a cambiar.
+Con `emsafe.ai-forecasting.seed-demo=true` (por defecto `false`; **nunca en producción**),
+`AiForecastingDemoSeeder` ejecuta un guion determinista (`DemoExposurePlan`) sobre la empresa
+Quantum (`ops@quantumdyn.com`) al arrancar, después de `DataInitializer`. **No escribe en tablas de
+otros contextos**: todo pasa por sus servicios públicos, con las mismas reglas que la API.
 
-### Personal Dosimetry
+| Contexto | Vía | Qué crea, si falta |
+| --- | --- | --- |
+| IAM | `UserRepository` (como `DataInitializer`), clave con el `PasswordEncoder` | `operario3/4/5@quantumdyn.com`, WORKER activos de Quantum, clave `worker123`. Usa también `operario1`. Si un email existe con otro rol u organización, se salta |
+| Plant Configuration | `PlantZoneService`, `JobPositionService` | Zona "Planta AF demo" y puestos Prensa hidráulica, Soldadura e Inspección de calidad |
+| Device Management | `DeviceCatalog`, `DeviceService.create` | Un `PERSONAL_DOSIMETER` por operario (`AF-DEMO-DOS-01..04`) |
+| Personal Dosimetry | `PersonalDosimetryService` (actor ADMIN), `ExposureQueryFacade` | Membresías OPERATOR, límite 12000 uT·s con advertencia 0.8, **60 jornadas cerradas** (15 días hábiles de las últimas 3 semanas × 4 operarios, 08:00–16:00 de Lima) y **una abierta hoy** por operario, iniciada hace 4 h |
+| Alerts | `AlarmService.forWorker`, `acknowledgeAs`, `resolve` | Acusa y resuelve las alertas de las jornadas del historial |
 
-- **Origen de los avisos.** Hoy `ExposureWarningRaised` llega por `POST /inbox/exposure-warning-raised`.
-  Cuando la rama esté en `develop`, se necesita un relay que lea el outbox de Personal Dosimetry,
-  invoque `TriggerAssessmentHandler` con el mismo `eventId` y haga `ack` en ese outbox. La
-  idempotencia por `af_processed_message` ya cubre los reintentos.
-- **Origen de los snapshots.** El inbox `exposure-snapshot` también puede alimentarse desde Personal
-  Dosimetry, con esta correspondencia: `ExposureSession.startedAt` → `sessionStartedAt`,
-  `jobPositionId` → `positionId` y `limitVersionId` → `limitVersionId`. Personal Dosimetry no
-  conoce la zona: `zoneId` seguirá llegando por `shift-updated`.
-- **Nada cambia en el dominio.** El contrato de `ExposureWarningRaisedCommand` ya coincide con el
-  evento (`methodId`, `unit`, `limitVersionId`).
+El guion deja 9 jornadas sobre la advertencia, 2 cerca del límite, **una sola excedencia** y una
+con cobertura incompleta. Hoy, operario1 y operario3 quedan sobre la advertencia: AI Forecasting
+los evalúa como HIGH y CRITICAL cuando el relay entrega el aviso.
 
-### Occupational Health
+Los hechos llegan a los demás contextos por el relay de Personal Dosimetry, como con datos reales
+(snapshots, evaluaciones, alertas, una propuesta de mitigación y los cierres). Para que el
+historial no aparezca como actual:
 
-- **Publicación de eventos.** Hoy los eventos quedan en `af_outbox` y se consultan con
-  `GET /outbox`. Hay que añadir un publicador que lea los pendientes, envíe el `payload` de
-  `RotationSuggested` a `POST /api/v1/occupational-health/inbox/rotation-suggested` (o lo publique
-  en proceso con `ApplicationEventPublisher`) y llame a `ack`. El payload ya es compatible.
-- **Sobre de eventos.** El inbox de Occupational Health hoy crea su propio sobre
-  (`EventEnvelope.of`) y pierde nuestro `eventId`/`correlationId`. Para conservar la trazabilidad,
-  ese contexto debería aceptar el sobre entrante.
-- **Cambios de turno.** Los `WorkerShift` de Occupational Health son la fuente natural de
-  `shift-updated` (zona, puesto y fin de turno). Se conectan con un adaptador que invoque
-  `ShiftUpdatedHandler`.
+1. **Drenado.** Tras sembrar el historial, el seeder drena ese relay (`drainOnce`, tope de 20
+   pasadas). Si está apagado (`emsafe.personal-dosimetry.outbox-relay-enabled=false`), lo avisa en
+   el log y no hace este paso.
+2. **Alertas del historial.** Las 10 alertas (9 de advertencia y 1 danger) se acusan como su
+   operario y se resuelven en el acto, antes de la ventana de 60 s del escalamiento automático:
+   nada se escala al SSO.
+3. **Jornadas de hoy.** Se abren después; sus 2 alertas de advertencia quedan **pendientes**,
+   porque esas jornadas siguen abiertas.
 
-### IAM (`feature/iam`)
+**Idempotente.** Si los operarios demo ya tienen jornadas en la ventana, el historial no se
+repite. Una jornada abierta de un arranque anterior que ya cumplió sus 8 h se cierra y se abre la
+de hoy. Un paso que falla se registra y no detiene a los demás. En `prod`, `DataInitializer` no
+corre: sin Quantum ni el ADMIN demo, la semilla solo registra "skipped".
 
-- **Directorio de actores.** Hay que cambiar solo `IamForecastingActorDirectory`. Con la columna
-  `users.organization_id` (V13 de IAM), un `SSO_RESPONSIBLE` representa a la organización
-  `user.organizationId`.
-- **Política de acceso.** En `ForecastingAccessPolicy` hay que habilitar `SSO_RESPONSIBLE` para las
-  consultas de su organización. El inbox y el outbox siguen siendo solo de ADMIN.
-- **Cuentas de empresa.** La convención actual, en la que la organización es una cuenta CLIENT
-  `company` y su id es el del usuario, es compatible: IAM también referencia la organización como
-  `users(id)` de la empresa.
+Limitación: Personal Dosimetry no conoce la zona, así que sin un `ShiftUpdated` de Occupational
+Health no hay candidatos de rotación y las recomendaciones de la demo son `RESCHEDULE_TASK`.
 
-### Orden de migraciones Flyway
+## Gemini y variables de entorno
 
-`V18__ai_forecasting.sql` debe aplicarse **después** de V13–V17:
+`gemini.api-key` no tiene valor por defecto en ningún perfil (`${GEMINI_API_KEY:}`). La clave que
+estuvo en `application-dev.properties` sigue en el historial de git y debe regenerarse. La misma
+propiedad la usa el chat de Client Portal.
 
-| Versión | Rama |
-| --- | --- |
-| V13 | `feature/iam` (`user_organization`) **y** `feature/occupational-health-mitigation` (`occupational_health`) |
-| V14–V15 | `feature/occupational-health-mitigation` |
-| V16–V17 | `feature/personal-dosimetry` |
-| V18 | `feature/ai-forecasting` |
+| `llm.enabled` | `GEMINI_API_KEY` | Resultado |
+| --- | --- | --- |
+| `false` (por defecto) | da igual | Plantilla (`FallbackOnlyRedactionAdapter`). Log: `LLM disabled, using template redaction` |
+| `true` | vacía | Arranca, avisa **una vez** (`llm.enabled=true but gemini.api-key is empty`) y usa la plantilla |
+| `true` | definida | `GeminiRedactionAdapter`. Ante error, timeout o respuesta vacía, plantilla y aviso por evaluación |
 
-- **Colisión en V13.** `feature/iam` y `feature/occupational-health-mitigation` usan las dos V13.
-  Flyway falla con dos migraciones de la misma versión, así que una de ellas tiene que renumerarse
-  antes de integrar. No afecta a V18.
-- **Bases locales que ya aplicaron V18.** Por ejemplo, una base `dev` arrancada desde esta rama
-  queda en V18 sin V13–V17, y Flyway rechazará esas migraciones por estar fuera de orden. Hay tres
-  opciones:
-  1. recrear la base local (es lo recomendado: `DataInitializer` la vuelve a sembrar);
-  2. arrancar una vez con `spring.flyway.out-of-order=true`;
-  3. borrar las tablas `af_*` y la fila 18 de `flyway_schema_history` para que V18 se aplique de
-     nuevo al final.
-- **En producción**, basta con integrar las ramas en orden de versión: V18 se aplica al final.
+Prueba local con Gemini, solo para esa terminal de PowerShell:
 
-### Conflicto en `SecurityConfig`
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-17.0.21.9-hotspot'
+$s = Read-Host 'GEMINI_API_KEY' -AsSecureString      # no queda en el historial
+$env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new('', $s).Password
+$env:EMSAFE_AIFORECASTING_LLM_ENABLED = 'true'
+.\mvnw.cmd spring-boot:run
+# al terminar
+Remove-Item Env:GEMINI_API_KEY, Env:EMSAFE_AIFORECASTING_LLM_ENABLED
+```
 
-Las tres ramas modifican el mismo bloque `authorizeHttpRequests` alrededor de la regla
-`.requestMatchers("/api/v1/**").permitAll()`, así que al fusionarlas aparecerá un conflicto textual
-en `SecurityConfig`:
+Debe aparecer `AI Forecasting: Gemini redaction enabled` y, tras un aviso, la evaluación debe traer
+`redaction.generatedBy = LLM`.
 
-| Rama | Cambio |
-| --- | --- |
-| `feature/personal-dosimetry` | `"/api/v1/personal-dosimetry/**"` autenticado, un `HttpStatusEntryPoint(401)` solo para su ruta y un filtro de auditoría |
-| `feature/occupational-health-mitigation` | `"/api/v1/occupational-health/**"` con `hasAnyRole("SSO", "WORKER", "ADMIN")` |
-| `feature/iam` | Reglas de `/api/sso/**` y de perfil con los roles `WORKER` y `SSO_RESPONSIBLE` |
-| `feature/ai-forecasting` | `"/api/v1/ai-forecasting/**"` autenticado |
+### Variables del despliegue (Azure, perfil `prod`)
 
-Reglas para resolver el conflicto:
+| Variable | ¿Obligatoria? | Propósito |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | No | Clave de Gemini para la redacción (y el chat de Client Portal). Vacía: plantilla |
+| `EMSAFE_AIFORECASTING_LLM_ENABLED` | No (`false`) | `true` para redactar con Gemini |
+| `EMSAFE_AIFORECASTING_LLM_TIMEOUTMS` | No (`5000`) | Timeout con Gemini, en ms |
+| `EMSAFE_AIFORECASTING_SEEDDEMO` | **No debe existir** (o `false`) | Semilla de demo |
+| `EMSAFE_AIFORECASTING_OUTBOXRELAYENABLED` | No (`true`) | Relay que entrega `RotationSuggested` a Occupational Health |
+| `JWT_SECRET` | **Sí** (plataforma) | Validación de tokens; sin ella `prod` no arranca |
+| `MYSQL_URL`, `MYSQL_USER`, `MYSQL_PASSWORD` | **Sí** (plataforma) | Base de datos, incluidas las tablas `af_*` |
+| `CORS_ALLOWED_ORIGINS` | En la práctica sí (plataforma) | Que el portal pueda llamar a la API |
 
-1. **Conservar todas las reglas específicas.** Cada `"/api/v1/<contexto>/**"` debe quedar
-   **antes** de `.requestMatchers("/api/v1/**").permitAll()`. Si una queda después, ese contexto
-   queda abierto sin autenticación.
-2. **El 401 de Personal Dosimetry no cambia AI Forecasting.** Su entry point está acotado a su
-   ruta: AI Forecasting seguirá respondiendo `403` sin token, y
-   `AiForecastingApiIntegrationTest` lo verifica.
-3. **Revisar el nombre del rol SSO.** Occupational Health usa el rol `SSO` e IAM define
-   `SSO_RESPONSIBLE`. Hay que alinearlos al integrar; no afecta a AI Forecasting.
-4. **Volver a correr las pruebas.** Después de resolver el conflicto, corre `./mvnw test`.
-   `AiForecastingApiIntegrationTest` falla si `/api/v1/ai-forecasting/**` queda sin autenticar o
-   si `/api/v1/readings` (IoT, público) deja de serlo por error.
+Los umbrales tienen valores por defecto en `application.properties` y no hace falta definirlos.
+
+## Integración con otros contextos
+
+Todo en proceso (sin broker). Ningún adaptador lee tablas de otro contexto.
+
+| Dirección | Pieza | Qué hace |
+| --- | --- | --- |
+| Personal Dosimetry → AI Forecasting | `DosimetryOutboxRelay` (PD) publica; `DosimetryInboxEventListener` (AF) consume | `ExposureSessionOpened` → `UpsertExposureSnapshotCommand` (snapshot con `zoneId` nulo); `ExposureWarningRaised` → `ExposureWarningRaisedCommand` (evaluación). Síncrono y `REQUIRES_NEW`: un fallo, por ejemplo un 409 porque el aviso llegó antes que la apertura, deja el evento pendiente en PD y se reintenta. Idempotencia por `af_processed_message` |
+| Personal Dosimetry → AI Forecasting | `ExposureQueryFacade.closedSessions` | Histórico de jornadas cerradas para la analítica (solo lectura) |
+| Occupational Health → AI Forecasting | `ShiftUpdatedEventListener` | `ShiftUpdated` → `ShiftUpdatedHandler` (zona, puesto y recálculo de la evaluación activa). `AFTER_COMMIT` y `REQUIRES_NEW`; un 409 (sesión sin snapshot) se registra y no se propaga |
+| AI Forecasting → Occupational Health | `ForecastingOutboxRelay` | `RotationSuggested` → inbox de OH (propuesta de mitigación), conservando `eventId` y `correlationId`. `PredictiveRiskDetected` es interno (ver [Eventos salientes](#eventos-salientes)) |
+| Plant Configuration → AI Forecasting | `JobPositionService.listFor` | Nombres de puesto en la analítica |
+| IAM → AI Forecasting | `IamForecastingActorDirectory` (`UserRepository`, solo lectura) | Rol y organización de la cuenta ([Acceso](#acceso)) |
+
+`SecurityConfig` exige autenticación en `/api/v1/ai-forecasting/**`, declarada antes del
+`permitAll` de `/api/v1/**`. Ese `permitAll` sigue existiendo para el resto de `/api/v1` (docs/iam.md
+§7): si se quita, esta ruta no cambia; si una regla nueva se declara después de él, queda abierta.
+`AiForecastingApiIntegrationTest` falla si `/api/v1/ai-forecasting/**` queda sin autenticar.
+
+## Pendientes conocidos
+
+- **`SESSION_ENDED` no se aplica.** Ninguna evaluación se cierra al terminar la jornada, así que
+  `projections/critical-workers` y `projections/workers/{id}` pueden mostrar jornadas ya cerradas.
+  La analítica sí las excluye. Arreglarlo necesita recibir el cierre de jornada (por ejemplo, un
+  `ExposureSessionClosedCommand` propio que publique el relay de Personal Dosimetry).
+- **404 antes que 403.** En `assessments/{id}` y `projections/workers/{workerId}`, un id inexistente
+  da 404 antes de mirar la organización: un usuario de otra organización puede distinguir "no
+  existe" de "no es tuyo".
+- **Zona desde Personal Dosimetry.** Llega nula. Sin `ShiftUpdated` no hay candidatos de rotación.
+- **Eventos `PredictiveRiskDetected` antiguos.** Los ya marcados por versiones anteriores del relay
+  tienen `publishedAt`, igual que los nuevos: el significado ("despachado sin consumidor") no cambió.

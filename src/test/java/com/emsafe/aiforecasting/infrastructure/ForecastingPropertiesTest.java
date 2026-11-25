@@ -61,6 +61,21 @@ class ForecastingPropertiesTest {
     }
 
     @Test
+    void nearLimitRatioDefaultsTo090BindsAndFailsFastOutOfRange() {
+        assertThat(new ForecastingProperties().getNearLimitRatio()).isEqualByComparingTo("0.90");
+
+        ForecastingProperties bound = new Binder(new MapConfigurationPropertySource(
+                Map.of("emsafe.ai-forecasting.near-limit-ratio", "0.85")))
+                .bind("emsafe.ai-forecasting", ForecastingProperties.class).get();
+        assertThat(bound.getNearLimitRatio()).isEqualByComparingTo("0.85");
+
+        ForecastingProperties invalid = new ForecastingProperties();
+        invalid.setNearLimitRatio(new java.math.BigDecimal("1.2"));
+        assertThatThrownBy(() -> new AiForecastingConfiguration().exposureAnalyticsCalculator(invalid))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void nonPositiveShiftHoursFailFast() {
         ForecastingProperties p = new ForecastingProperties();
         p.setDefaultShiftHours(0);

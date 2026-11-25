@@ -16,6 +16,12 @@ class ForecastingAccessPolicyTest {
     private static final ForecastingActor ADMIN = new ForecastingActor(1L, true, null);
     private static final ForecastingActor COMPANY = new ForecastingActor(10L, false, 10L);
     private static final ForecastingActor TECHNICIAN = new ForecastingActor(20L, false, null);
+    /** SSO_RESPONSIBLE de la organización 10: el directorio le asigna users.organization_id. */
+    private static final ForecastingActor SSO = new ForecastingActor(30L, false, 10L);
+    /** SSO_RESPONSIBLE con organization_id null en la base. */
+    private static final ForecastingActor SSO_WITHOUT_ORG = new ForecastingActor(31L, false, null);
+    /** El directorio nunca le asigna organización a un WORKER. */
+    private static final ForecastingActor WORKER = new ForecastingActor(40L, false, null);
 
     private final Map<String, ForecastingActor> users = Map.of(
             "admin@x", ADMIN, "company@x", COMPANY, "tech@x", TECHNICIAN);
@@ -67,5 +73,31 @@ class ForecastingAccessPolicyTest {
         assertThatThrownBy(() -> policy.organizationScope(COMPANY, 11L)).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> policy.organizationScope(TECHNICIAN, null))
                 .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void ssoReadsOnlyItsOwnOrganization() {
+        assertThatCode(() -> policy.requireOrganizationAccess(SSO, 10L)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> policy.requireOrganizationAccess(SSO, 11L))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void ssoScopeDefaultsToItsOrganizationAndRejectsAnother() {
+        assertThat(policy.organizationScope(SSO, null)).isEqualTo(10L);
+        assertThat(policy.organizationScope(SSO, 10L)).isEqualTo(10L);
+        assertThatThrownBy(() -> policy.organizationScope(SSO, 11L)).isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void ssoWithoutOrganizationAndWorkerAreDenied() {
+        for (ForecastingActor actor : new ForecastingActor[]{SSO_WITHOUT_ORG, WORKER}) {
+            assertThatThrownBy(() -> policy.organizationScope(actor, null)).isInstanceOf(AccessDeniedException.class);
+            assertThatThrownBy(() -> policy.organizationScope(actor, 10L)).isInstanceOf(AccessDeniedException.class);
+            assertThatThrownBy(() -> policy.requireOrganizationAccess(actor, 10L))
+                    .isInstanceOf(AccessDeniedException.class);
+            assertThatThrownBy(() -> policy.requireAdministrator(actor)).isInstanceOf(AccessDeniedException.class);
+        }
+        assertThatThrownBy(() -> policy.requireAdministrator(SSO)).isInstanceOf(AccessDeniedException.class);
     }
 }
