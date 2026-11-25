@@ -62,11 +62,15 @@ public class AnalyticsSummaryQueryHandler {
         this.clock = clock;
     }
 
-    @Transactional(readOnly = true)
-    public AnalyticsSummary summarize(Long organizationId, LocalDate from, LocalDate to, String zone) {
-        if (organizationId == null) {
-            throw new BadRequestException("organizationId is required");
-        }
+    /** Periodo ya resuelto: días inclusivos en {@code zone}. */
+    public record Period(LocalDate from, LocalDate to, ZoneId zone) {
+    }
+
+    /**
+     * Resuelve y valida el periodo con las mismas reglas que {@link #summarize}: 400 si la zona no es
+     * válida, si {@code from} es posterior a {@code to} o si supera {@value #MAX_RANGE_DAYS} días.
+     */
+    public Period resolve(LocalDate from, LocalDate to, String zone) {
         ZoneId zoneId = zone(zone);
         LocalDate today = LocalDate.now(clock.withZone(zoneId));
         LocalDate end = to != null ? to : today;
@@ -77,6 +81,18 @@ public class AnalyticsSummaryQueryHandler {
         if (ChronoUnit.DAYS.between(start, end) + 1 > MAX_RANGE_DAYS) {
             throw new BadRequestException("The period cannot exceed " + MAX_RANGE_DAYS + " days");
         }
+        return new Period(start, end, zoneId);
+    }
+
+    @Transactional(readOnly = true)
+    public AnalyticsSummary summarize(Long organizationId, LocalDate from, LocalDate to, String zone) {
+        if (organizationId == null) {
+            throw new BadRequestException("organizationId is required");
+        }
+        Period period = resolve(from, to, zone);
+        ZoneId zoneId = period.zone();
+        LocalDate start = period.from();
+        LocalDate end = period.to();
         Instant fromInstant = start.atStartOfDay(zoneId).toInstant();
         Instant toInstant = end.plusDays(1).atStartOfDay(zoneId).toInstant();
         Instant now = clock.instant();
