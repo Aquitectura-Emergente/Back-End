@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -107,6 +108,14 @@ class AiForecastingAnalyticsApiTest {
 
     private ResultActions summary(String token, long org, String... params) throws Exception {
         return getAs(token, "/analytics/organizations/" + org + "/summary", params);
+    }
+
+    private ResultActions insights(String token, long org, String... params) throws Exception {
+        MockHttpServletRequestBuilder request = post(BASE + "/analytics/organizations/" + org + "/insights");
+        for (int i = 0; i < params.length; i += 2) {
+            request.param(params[i], params[i + 1]);
+        }
+        return mvc.perform(token == null ? request : request.header(HttpHeaders.AUTHORIZATION, "Bearer " + token));
     }
 
     private void postAs(String token, String path, String json) throws Exception {
@@ -255,5 +264,90 @@ class AiForecastingAnalyticsApiTest {
 
         summary(adminToken, org).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.projectedCriticalWorkers[*].workerId", contains(w101)));
+    }
+
+    // ─── Análisis con IA ─────────────────────────────────────────────────────
+
+    @Test
+    void insightsHaveTheSameAccessAsTheSummary() throws Exception {
+        insights(ssoToken, companyOrg, "from", "2026-11-02", "to", "2026-11-22").andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.organizationId").value(companyOrg));
+        insights(adminToken, companyOrg).andExpect(status().isOk());
+        insights(companyToken, companyOrg).andExpect(status().isOk());
+
+        insights(ssoToken, otherCompanyOrg).andExpect(status().isForbidden());
+        insights(otherCompanyToken, companyOrg).andExpect(status().isForbidden());
+        insights(workerToken, companyOrg).andExpect(status().isForbidden());
+        insights(technicianToken, companyOrg).andExpect(status().isForbidden());
+        insights(null, companyOrg).andExpect(status().isForbidden());
+        // el acceso se comprueba antes que el periodo
+        insights(workerToken, companyOrg, "from", "2026-11-10", "to", "2026-11-01").andExpect(status().isForbidden());
+    }
+
+    @Test
+    void insightsRejectAnInvalidPeriodOrZoneWith400() throws Exception {
+        insights(ssoToken, companyOrg, "from", "2026-11-10", "to", "2026-11-01").andExpect(status().isBadRequest());
+        insights(ssoToken, companyOrg, "from", "2025-01-01", "to", "2026-11-10").andExpect(status().isBadRequest());
+        insights(ssoToken, companyOrg, "zone", "Mars/Olympus").andExpect(status().isBadRequest());
+        insights(ssoToken, companyOrg, "from", "10/11/2026").andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void insightsWithoutLlmAreTheDeterministicFallbackOfTheSummary() throws Exception {
+        PlantZone zone = zones.save(PlantZone.create(companyOrg, "Zona insights " + run, null));
+        long press = jobPositions.save(JobPosition.create(zone.getId(), "Prensa " + run, null)).getId();
+        when(dosimetry.closedSessions(any(), any(), any())).thenReturn(List.of(
+                closed("I-1", w101, press, "11400", "2026-11-10T21:00:00Z"),
+                closed("I-2", w101, press, "12300", "2026-11-17T21:00:00Z"),
+                closed("I-3", w200, press, "3000", "2026-11-17T21:00:00Z")));
+
+        insights(ssoToken, companyOrg, "from", "2026-11-09", "to", "2026-11-22", "zone", "UTC")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.generatedBy").value("FALLBACK"))
+                .andExpect(jsonPath("$.data.model").doesNotExist())
+                .andExpect(jsonPath("$.data.generatedAt").exists())
+                .andExpect(jsonPath("$.data.period.from").value("2026-11-09"))
+                .andExpect(jsonPath("$.data.period.to").value("2026-11-22"))
+                .andExpect(jsonPath("$.data.period.zone").value("UTC"))
+                .andExpect(jsonPath("$.data.isAdvisory").value(true))
+                .andExpect(jsonPath("$.data.disclaimer").value("Análisis generado con reglas automáticas (IA no "
+                        + "disponible). Las cifras provienen del motor de pronóstico y deben ser validadas por el SSO."))
+                .andExpect(jsonPath("$.data.disclaimer").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("generado por IA"))))
+                .andExpect(jsonPath("$.data.resumen").value(org.hamcrest.Matchers.containsString(
+                        "3 jornadas de 2 operarios")))
+                .andExpect(jsonPath("$.data.hallazgos[0].nivel").value("CRITICO"))
+                // w101 no es una cuenta de IAM de esta organización: "operario #id"
+                .andExpect(jsonPath("$.data.hallazgos[0].texto").value(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("1 jornada superó el límite"),
+                        org.hamcrest.Matchers.containsString("el operario #" + w101))))
+                .andExpect(jsonPath("$.data.recomendaciones[0].prioridad").value("ALTA"))
+                .andExpect(jsonPath("$.data.recomendaciones[0].operariosAfectados[0]").value(w101))
+                .andExpect(jsonPath("$.data.recomendaciones[1].puestosAfectados[0].positionId").value(press))
+                .andExpect(jsonPath("$.data.recomendaciones[1].puestosAfectados[0].positionName").value("Prensa " + run))
+                .andExpect(jsonPath("$.data.calidadDatos").value(org.hamcrest.Matchers.containsString("Pocos datos")));
+    }
+
+    @Test
+    void insightsAreCachedForTheSamePeriodAndRefreshForcesANewOne() throws Exception {
+        long org = companyOrg;
+        String[] period = {"from", "2026-10-01", "to", "2026-10-31", "zone", "UTC"};
+        String first = generatedAt(insights(adminToken, org, period));
+        String second = generatedAt(insights(ssoToken, org, period));
+        assertThat(second).isEqualTo(first);
+
+        String[] refreshed = {"from", "2026-10-01", "to", "2026-10-31", "zone", "UTC", "refresh", "true"};
+        String third = generatedAt(insights(ssoToken, org, refreshed));
+        assertThat(third).isNotEqualTo(first);
+        assertThat(generatedAt(insights(ssoToken, org, period))).isEqualTo(third);
+
+        // otra zona es otra entrada de la caché
+        assertThat(generatedAt(insights(ssoToken, org, "from", "2026-10-01", "to", "2026-10-31")))
+                .isNotEqualTo(third);
+    }
+
+    private static String generatedAt(ResultActions result) throws Exception {
+        String body = result.andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        return JsonPath.read(body, "$.data.generatedAt");
     }
 }

@@ -11,6 +11,7 @@ import com.emsafe.aiforecasting.application.ForecastingActorDirectory;
 import com.emsafe.aiforecasting.application.ForecastingEventFactory;
 import com.emsafe.aiforecasting.application.ModelVersionProvider;
 import com.emsafe.aiforecasting.application.OutboxQueryHandler;
+import com.emsafe.aiforecasting.application.PeriodInsightsQueryHandler;
 import com.emsafe.aiforecasting.application.PreventiveAssessmentWorkflow;
 import com.emsafe.aiforecasting.application.ShiftUpdatedHandler;
 import com.emsafe.aiforecasting.application.TriggerAssessmentHandler;
@@ -21,16 +22,21 @@ import com.emsafe.aiforecasting.domain.ports.ClosedSessionHistoryPort;
 import com.emsafe.aiforecasting.domain.ports.ForecastingOutboxPort;
 import com.emsafe.aiforecasting.domain.ports.NaturalLanguagePort;
 import com.emsafe.aiforecasting.domain.ports.OpenSessionPort;
+import com.emsafe.aiforecasting.domain.ports.PeriodInsightsPort;
 import com.emsafe.aiforecasting.domain.ports.PositionCatalogPort;
 import com.emsafe.aiforecasting.domain.ports.ProcessedMessagePort;
+import com.emsafe.aiforecasting.domain.ports.WorkerNamePort;
 import com.emsafe.aiforecasting.domain.ports.WorkerSnapshotRepository;
 import com.emsafe.aiforecasting.domain.services.CriticalityAssessmentService;
 import com.emsafe.aiforecasting.domain.services.ExposureAnalyticsCalculator;
 import com.emsafe.aiforecasting.domain.services.ExposureProjectionService;
 import com.emsafe.aiforecasting.domain.services.FallbackMessagePolicy;
+import com.emsafe.aiforecasting.domain.services.InsightsFallbackPolicy;
 import com.emsafe.aiforecasting.domain.services.RotationCandidateSelector;
 import com.emsafe.aiforecasting.domain.services.RotationRecommendationService;
+import com.emsafe.aiforecasting.infrastructure.llm.FallbackOnlyInsightsAdapter;
 import com.emsafe.aiforecasting.infrastructure.llm.FallbackOnlyRedactionAdapter;
+import com.emsafe.aiforecasting.infrastructure.llm.GeminiInsightsAdapter;
 import com.emsafe.aiforecasting.infrastructure.llm.GeminiRedactionAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,6 +104,11 @@ public class AiForecastingConfiguration {
     }
 
     @Bean
+    InsightsFallbackPolicy insightsFallbackPolicy() {
+        return new InsightsFallbackPolicy();
+    }
+
+    @Bean
     ExposureAnalyticsCalculator exposureAnalyticsCalculator(ForecastingProperties properties) {
         return new ExposureAnalyticsCalculator(properties.getNearLimitRatio());
     }
@@ -128,6 +139,23 @@ public class AiForecastingConfiguration {
         log.info("AI Forecasting: Gemini redaction enabled (model {}, timeout {} ms)",
                 model, properties.getLlm().getTimeoutMs());
         return new GeminiRedactionAdapter(
+                GeminiRedactionAdapter.restTemplateWithTimeout(Duration.ofMillis(properties.getLlm().getTimeoutMs())),
+                apiKey, model, fallback, clock);
+    }
+
+    /** Mismo criterio que {@link #naturalLanguagePort}: LLM apagado o sin clave, reglas deterministas. */
+    @Bean
+    PeriodInsightsPort periodInsightsPort(ForecastingProperties properties, InsightsFallbackPolicy fallback,
+                                          @Qualifier(CLOCK) Clock clock,
+                                          @Value("${gemini.api-key:}") String apiKey,
+                                          @Value("${gemini.model:gemini-2.5-flash}") String model) {
+        if (!properties.getLlm().isEnabled() || apiKey == null || apiKey.isBlank()) {
+            log.info("AI Forecasting: period insights use deterministic rules (LLM disabled or no key)");
+            return new FallbackOnlyInsightsAdapter(fallback, clock);
+        }
+        log.info("AI Forecasting: Gemini period insights enabled (model {}, timeout {} ms)",
+                model, properties.getLlm().getTimeoutMs());
+        return new GeminiInsightsAdapter(
                 GeminiRedactionAdapter.restTemplateWithTimeout(Duration.ofMillis(properties.getLlm().getTimeoutMs())),
                 apiKey, model, fallback, clock);
     }
@@ -206,6 +234,16 @@ public class AiForecastingConfiguration {
                                                               ExposureAnalyticsCalculator calculator,
                                                               @Qualifier(CLOCK) Clock clock) {
         return new AnalyticsSummaryQueryHandler(history, positions, assessments, openSessions, calculator, clock);
+    }
+
+    @Bean
+    PeriodInsightsQueryHandler periodInsightsQueryHandler(AnalyticsSummaryQueryHandler summaries,
+                                                          PeriodInsightsPort insights,
+                                                          WorkerNamePort workerNames,
+                                                          InsightsFallbackPolicy fallback,
+                                                          @Qualifier(CLOCK) Clock clock) {
+        return new PeriodInsightsQueryHandler(summaries, insights, workerNames, fallback, clock,
+                PeriodInsightsQueryHandler.DEFAULT_TTL);
     }
 
     @Bean

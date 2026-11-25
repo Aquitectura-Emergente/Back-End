@@ -18,6 +18,7 @@ La exposición es un índice acumulado en **uT·s** (`MAGNETIC_TIME_INDEX_V1`), 
 - [Reglas de cálculo](#reglas-de-cálculo)
 - [API](#api)
 - [Analítica](#analítica)
+- [Análisis con IA](#análisis-con-ia)
 - [Eventos salientes](#eventos-salientes)
 - [Propiedades](#propiedades)
 - [Persistencia](#persistencia)
@@ -198,6 +199,7 @@ Prefijo: `/api/v1/ai-forecasting`. Todas las respuestas usan `ApiResponse` (`suc
 | GET | `/projections/workers/{workerId}` | ADMIN u organización dueña | Evaluación activa del operario | 403, 404 |
 | GET | `/projections/critical-workers?organizationId&minCriticality&page&size` | ADMIN u organización dueña | Evaluaciones activas por criticidad descendente y luego por `estimatedExceedanceAt` ascendente (sin excedencia al final) | 400, 403 |
 | GET | `/analytics/organizations/{organizationId}/summary?from&to&zone` | ADMIN u organización dueña | Resumen del histórico de jornadas y críticos proyectados (ver [Analítica](#analítica)) | 400, 403 |
+| POST | `/analytics/organizations/{organizationId}/insights?from&to&zone&refresh` | ADMIN u organización dueña | Análisis consultivo del periodo para el SSO (ver [Análisis con IA](#análisis-con-ia)) | 400, 403 |
 | GET | `/outbox?page&size` | ADMIN | Eventos pendientes (`publishedAt` nulo), los más antiguos primero | 400, 403 |
 | POST | `/outbox/{eventId}/ack` | ADMIN | Marca un evento como publicado (idempotente) | 403, 404 |
 
@@ -357,6 +359,152 @@ ilustrativas:
 | `workersAboveWarning` | Sí | Lista con enlace al operario |
 | `projectedCriticalWorkers` | Opcional (foto del momento) | Principal |
 | `recommendations`, `incompleteCoverageSessions` | Efecto de la IA y calidad del dato | Secundario |
+
+## Análisis con IA
+
+`POST /api/v1/ai-forecasting/analytics/organizations/{organizationId}/insights?from=&to=&zone=&refresh=`
+
+Lectura del [resumen analítico](#analítica) del periodo, escrita para el responsable de SSO:
+
+- un **resumen** de 2 o 3 frases;
+- **hallazgos**, cada uno con su nivel (`INFO`, `ATENCION` o `CRITICO`);
+- **recomendaciones** preventivas concretas (rotación, pausas, revisar el puesto o el blindaje,
+  reprogramar tareas, capacitación), cada una con su motivo, su prioridad (`ALTA`, `MEDIA` o `BAJA`)
+  y los operarios (`workerId`) y puestos afectados;
+- en los textos, cada operario aparece con su **nombre** de IAM, o como "operario #id" si no se
+  encuentra;
+- la **calidad de los datos**: cobertura incompleta o pocas jornadas.
+
+Usa el mismo [acceso](#acceso) que `summary`: ADMIN, la cuenta CLIENT company y el SSO_RESPONSIBLE de
+su organización. Los demás reciben 403, y el acceso se comprueba antes que el periodo. Los parámetros
+`from`, `to` y `zone` se validan igual que en `summary` (400). Es `POST` porque puede llamar a un
+servicio externo con coste; no crea nada.
+
+### Qué hace
+
+1. `PeriodInsightsQueryHandler` resuelve el periodo y consulta la caché.
+2. Si no hay caché, obtiene el `AnalyticsSummary` de `AnalyticsSummaryQueryHandler`, sin recalcular
+   nada. La llamada al LLM queda fuera de la transacción de lectura.
+3. El puerto de dominio `PeriodInsightsPort` produce el análisis:
+   - `GeminiInsightsAdapter`, con `llm.enabled=true` y la key definida;
+   - `FallbackOnlyInsightsAdapter` en los demás casos.
+
+   Es el mismo patrón que la [redacción](#redacción). Los dos adaptadores están en
+   `infrastructure/llm` y reutilizan `gemini.api-key`, `gemini.model`,
+   `emsafe.ai-forecasting.llm.enabled` y `llm.timeout-ms`.
+4. Gemini recibe el periodo, los totales, las estadísticas por operario, semana y puesto, las
+   proyecciones vigentes y los conteos de recomendaciones, y debe devolver un JSON estructurado
+   (`responseMimeType = application/json` y `responseSchema`). El prompt le exige:
+   - usar **solo** los datos entregados y no inventar cifras;
+   - sugerir acciones preventivas concretas;
+   - recordar que el análisis es consultivo.
+5. El adaptador valida la respuesta: la estructura, los valores de `nivel` y `prioridad`, de 1 a 8
+   hallazgos y de 1 a 8 recomendaciones, y las longitudes máximas (`PeriodInsights.MAX_*`).
+
+**Consultivo y de solo lectura.** No cambia criticidades, evaluaciones, recomendaciones ni eventos.
+Siempre responde `isAdvisory = true` y un `disclaimer` que depende del origen:
+
+| `generatedBy` | `disclaimer` |
+| --- | --- |
+| `LLM` | Análisis generado por IA (Gemini). Las cifras provienen del motor de pronóstico y deben ser validadas por el SSO. |
+| `FALLBACK` | Análisis generado con reglas automáticas (IA no disponible). Las cifras provienen del motor de pronóstico y deben ser validadas por el SSO. |
+
+**Caché.** Se guarda en memoria durante 10 minutos, por organización, periodo resuelto (`from` y
+`to` ya calculados) y zona, así que pulsar varias veces no gasta llamadas. `refresh=true` genera un
+análisis nuevo y renueva la caché. También se guarda el fallback, para que con Gemini caído no se
+espere el timeout en cada clic. La caché es por instancia y se pierde al reiniciar.
+
+### Privacidad
+
+Ningún nombre, email ni ID real sale del backend. Los nombres se usan solo para los textos que lee
+el SSO:
+
+- Los operarios se envían como "Operario A", "Operario B"… y los puestos como "Puesto A"…
+  (`InsightsPseudonyms`). Los seudónimos se asignan en cada llamada y no son estables entre llamadas.
+- No se envían los IDs de organización, sesión ni evaluación, ni los nombres de los puestos.
+  Este contexto no conoce nombres ni emails de las personas.
+- Los nombres de los operarios se resuelven en el backend: `PeriodInsightsQueryHandler` los pide al
+  puerto `WorkerNamePort`, cuyo adaptador es `IamWorkerNameAdapter` (IAM, solo lectura, igual que
+  `IamForecastingActorDirectory`). El adaptador solo devuelve cuentas de la misma organización con
+  nombre. Sin nombre, o si IAM falla, el texto dice "operario #id".
+- Al recibir la respuesta (y también en el fallback), los seudónimos de los textos se reemplazan:
+  - "al Operario A" pasa a "a Lucía Mendoza", o a "al operario #14" si no hay nombre;
+  - "Puesto A" pasa a "Puesto Prensa hidráulica", o al ID si el puesto no tiene nombre.
+
+  Si un nombre largo hace que un texto supere su límite, el texto se recorta con "…".
+- En `operariosAfectados` los seudónimos se reemplazan por el `workerId`, y en `puestosAfectados`
+  por `{positionId, positionName}`.
+- Si el modelo usa un seudónimo que no existe, la respuesta se considera inválida.
+- La key viaja en la cabecera `x-goog-api-key` y nunca aparece en logs.
+- `GeminiInsightsAdapterTest` captura el cuerpo enviado y comprueba que no contiene IDs, nombres
+  de IAM ni emails, y que el texto final sí trae los nombres.
+
+### Fallback
+
+Si el LLM está apagado (el valor por defecto) o no hay key, o si Gemini supera el timeout, falla
+o devuelve algo inválido, `InsightsFallbackPolicy` (dominio, determinista) genera **la misma
+estructura** a partir del resumen, con `generatedBy = FALLBACK`, sin `model` y con el disclaimer de
+reglas automáticas. También nombra a los operarios. El análisis nunca falla por el LLM.
+
+| Parte | Reglas del fallback |
+| --- | --- |
+| Resumen | Jornadas y operarios del periodo, cuántas terminaron cerca del límite y cuántas lo superaron, y cuántos operarios tienen ahora una proyección HIGH o CRITICAL |
+| `CRITICO` | Excedencias del periodo; proyecciones CRITICAL |
+| `ATENCION` | Proyecciones HIGH; jornadas entre `nearLimitRatio` y el 100 % del límite; operarios con 3 o más jornadas sobre la advertencia; tendencia semanal que sube más del 10 % |
+| `INFO` | Puesto con mayor índice promedio; tendencia estable o a la baja |
+| `ALTA` | La acción del motor para cada proyección (rotar con el candidato, o reprogramar si no hay candidato viable); revisar las excedencias con el operario |
+| `MEDIA` | Revisar el blindaje del puesto con mayor índice si hubo jornadas cerca del límite; rotación periódica y pausas para los operarios recurrentes; revisar la planificación si la tendencia sube |
+| `BAJA` | Capacitación sobre el uso del dosímetro si hubo cobertura incompleta; si no hay nada que atender, mantener el monitoreo |
+| Calidad de datos | Jornadas con cobertura incompleta; menos de 10 jornadas cerradas ("pocos datos"); sin jornadas |
+
+### Ejemplo
+
+Respuesta real en modo `FALLBACK` con la [semilla de demo](#semilla-de-demo) (Quantum,
+`from` = hoy − 21 días). Se muestran los primeros 3 hallazgos y 3 de las 7 recomendaciones.
+Con Gemini, la forma es la misma, con `generatedBy = LLM`, `model = gemini-2.5-flash` y el disclaimer
+de IA.
+
+```json
+{
+  "success": true,
+  "data": {
+    "organizationId": 8,
+    "generatedBy": "FALLBACK",
+    "generatedAt": "2026-11-25T23:46:49.288080Z",
+    "period": { "from": "2026-11-04", "to": "2026-11-25", "zone": "America/Lima" },
+    "isAdvisory": true,
+    "disclaimer": "Análisis generado con reglas automáticas (IA no disponible). Las cifras provienen del motor de pronóstico y deben ser validadas por el SSO.",
+    "resumen": "Entre el 2026-11-04 y el 2026-11-25 se cerraron 60 jornadas de 4 operarios: 2 (3.33 %) terminaron a 90.00 % del límite o más y 1 (1.67 %) lo superaron. Ahora hay 2 operarios con proyección HIGH o CRITICAL en jornadas abiertas (1 CRITICAL).",
+    "hallazgos": [
+      { "texto": "1 jornada superó el límite en el periodo (1.67 %): Carlos Rojas.", "nivel": "CRITICO" },
+      { "texto": "Proyección CRITICAL en la jornada abierta de Lucía Mendoza: se estima superar el límite antes del fin del turno.", "nivel": "CRITICO" },
+      { "texto": "Proyección HIGH en la jornada abierta de Carlos Rojas: el índice se acerca al límite.", "nivel": "ATENCION" }
+    ],
+    "recomendaciones": [
+      {
+        "accion": "Reprogramar las tareas restantes de Lucía Mendoza (no hay candidato viable para rotar).",
+        "motivo": "Proyección CRITICAL: 182.43 % del límite al fin del turno; excedencia estimada a las 19:09 (America/Lima).",
+        "prioridad": "ALTA", "operariosAfectados": [14], "puestosAfectados": []
+      },
+      {
+        "accion": "Revisar el blindaje, la distancia a la fuente y los tiempos de permanencia en el puesto Prensa hidráulica.",
+        "motivo": "Es el puesto con mayor índice final promedio (9728 uT·s) y hubo jornadas cerca del límite.",
+        "prioridad": "MEDIA", "operariosAfectados": [],
+        "puestosAfectados": [{ "positionId": 1, "positionName": "Prensa hidráulica" }]
+      },
+      {
+        "accion": "Reforzar la capacitación sobre el uso continuo del dosímetro.",
+        "motivo": "1 jornada con cobertura incompleta: el índice real pudo ser mayor.",
+        "prioridad": "BAJA", "operariosAfectados": [], "puestosAfectados": []
+      }
+    ],
+    "calidadDatos": "1 de 60 jornadas tiene cobertura incompleta; su índice puede estar subestimado."
+  }
+}
+```
+
+`model` no aparece en modo `FALLBACK` porque Jackson omite los nulos. Los textos nombran a Carlos
+Rojas y Lucía Mendoza, pero `operariosAfectados` sigue con sus `workerId` (`12` y `14`).
 
 ## Eventos salientes
 
@@ -636,10 +784,10 @@ $env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-17.0.21.9-hotspot'   # o
 
 | Capa | Clases |
 | --- | --- |
-| Dominio (sin Spring) | `ExposureProjectionServiceTest`, `RotationCandidateSelectorTest`, `CriticalityAssessmentServiceTest`, `RotationRecommendationServiceTest`, `PreventiveAssessmentTest`, `FallbackMessagePolicyTest`, `WorkerExposureSnapshotTest`, `AssessmentPriorityTest`, `ValueObjectsTest`, `ExposureAnalyticsCalculatorTest` y `DomainPurityTest` (falla si el dominio importa Spring, JPA o Lombok) |
-| Aplicación, con fakes en memoria | `TriggerAssessmentHandlerTest`, `UpsertExposureSnapshotHandlerTest`, `ShiftUpdatedHandlerTest`, `QueryHandlersTest`, `OutboxHandlersTest`, `ForecastingAccessPolicyTest` (incluye SSO), `AnalyticsSummaryQueryHandlerTest`, `OpenSessionAssessmentsTest` (vigentes y cierre con `SESSION_ENDED`) |
-| Infraestructura | `AiForecastingPersistenceTest` (`@DataJpaTest` sobre H2), `GeminiRedactionAdapterTest` (`MockRestServiceServer`: éxito, timeout, vacío, error), `NaturalLanguagePortWiringTest` (qué adaptador según `llm.enabled` y la key), `ForecastingOutboxRelayTest`, `IamForecastingActorDirectoryTest`, `AnalyticsAdaptersTest`, `ShiftUpdatedEventListenerTest`, `ForecastingPropertiesTest`, `DemoExposurePlanTest`, `AiForecastingDemoSeederTest` (semilla de punta a punta con el relay de Personal Dosimetry, alertas y escalamiento) |
-| REST | `AiForecastingControllerTest` (contrato web y Swagger), `AiForecastingApiIntegrationTest` (JWT real por login: acceso por rol incluido SSO y WORKER, flujo, contrato de Occupational Health, ack, duplicados y 400/404/409/422) y `AiForecastingAnalyticsApiTest` (analítica con JWT real) |
+| Dominio (sin Spring) | `ExposureProjectionServiceTest`, `RotationCandidateSelectorTest`, `CriticalityAssessmentServiceTest`, `RotationRecommendationServiceTest`, `PreventiveAssessmentTest`, `FallbackMessagePolicyTest`, `WorkerExposureSnapshotTest`, `AssessmentPriorityTest`, `ValueObjectsTest`, `ExposureAnalyticsCalculatorTest`, `InsightsFallbackPolicyTest` (incluye nombres en los textos) y `DomainPurityTest` (falla si el dominio importa Spring, JPA o Lombok) |
+| Aplicación, con fakes en memoria | `TriggerAssessmentHandlerTest`, `UpsertExposureSnapshotHandlerTest`, `ShiftUpdatedHandlerTest`, `QueryHandlersTest`, `OutboxHandlersTest`, `ForecastingAccessPolicyTest` (incluye SSO), `AnalyticsSummaryQueryHandlerTest`, `OpenSessionAssessmentsTest` (vigentes y cierre con `SESSION_ENDED`), `PeriodInsightsQueryHandlerTest` (caché, `refresh`, periodo inválido, solo lectura) |
+| Infraestructura | `AiForecastingPersistenceTest` (`@DataJpaTest` sobre H2), `GeminiRedactionAdapterTest` (`MockRestServiceServer`: éxito, timeout, vacío, error), `NaturalLanguagePortWiringTest` (qué adaptador según `llm.enabled` y la key), `GeminiInsightsAdapterTest` (JSON válido con seudónimos reemplazados por nombres; JSON inválido, timeout y error caen al fallback; prompt sin IDs ni nombres), `PeriodInsightsPortWiringTest`, `IamWorkerNameAdapterTest`, `ForecastingOutboxRelayTest`, `IamForecastingActorDirectoryTest`, `AnalyticsAdaptersTest`, `ShiftUpdatedEventListenerTest`, `ForecastingPropertiesTest`, `DemoExposurePlanTest`, `AiForecastingDemoSeederTest` (semilla de punta a punta con el relay de Personal Dosimetry, alertas, escalamiento y el análisis con IA en modo fallback) |
+| REST | `AiForecastingControllerTest` (contrato web y Swagger), `AiForecastingApiIntegrationTest` (JWT real por login: acceso por rol incluido SSO y WORKER, flujo, contrato de Occupational Health, ack, duplicados y 400/404/409/422) y `AiForecastingAnalyticsApiTest` (analítica y análisis con IA con JWT real: acceso, 400, fallback, caché y `refresh`) e `InsightsResourcesTest` (disclaimer por origen) |
 
 Fuera del paquete, `ExposureQueryFacadeTest` y `ExposureSessionRepositoryEndedBetweenTest` (Personal
 Dosimetry) cubren la fachada `closedSessions` que usa la analítica.
@@ -711,6 +859,10 @@ propiedad la usa el chat de Client Portal.
 | `false` (por defecto) | da igual | Plantilla (`FallbackOnlyRedactionAdapter`). Log: `LLM disabled, using template redaction` |
 | `true` | vacía | Arranca, avisa **una vez** (`llm.enabled=true but gemini.api-key is empty`) y usa la plantilla |
 | `true` | definida | `GeminiRedactionAdapter`. Ante error, timeout o respuesta vacía, plantilla y aviso por evaluación |
+
+El [Análisis con IA](#análisis-con-ia) sigue la misma tabla: con el LLM apagado o sin key usa
+`FallbackOnlyInsightsAdapter` (log: `period insights use deterministic rules`); con la key, usa
+`GeminiInsightsAdapter` (log: `Gemini period insights enabled`).
 
 Prueba local con Gemini, solo para esa terminal de PowerShell:
 

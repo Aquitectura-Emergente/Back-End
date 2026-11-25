@@ -48,6 +48,7 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -197,6 +198,66 @@ class AiForecastingDemoSeederTest {
                 Map.entry(workers.get(0), CriticalityLevel.HIGH));
         assertThat(s.projectedCriticalWorkers()).extracting(AnalyticsSummary.ProjectedCritical::workerId)
                 .containsExactly(workers.get(1), workers.get(0));
+    }
+
+    /** "Análisis con IA" sin LLM (perfil de test): el fallback cubre toda la estructura y cuadra con el resumen. */
+    @Test
+    void theFallbackInsightsOfTheDemoAreCompleteAndMatchTheSummary() throws Exception {
+        drainRelay();
+        long org = org();
+        List<Long> workers = demoWorkerIds();
+        LocalDate from = LocalDate.now(DemoExposurePlan.ZONE).minusDays(21);
+        AnalyticsSummary s = analytics.summarize(org, from, null, null);
+
+        String body = mvc.perform(as(ssoToken(), post("/api/v1/ai-forecasting/analytics/organizations/" + org
+                                + "/insights").param("from", from.toString()).param("refresh", "true")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.generatedBy").value("FALLBACK"))
+                .andExpect(jsonPath("$.data.model").doesNotExist())
+                .andExpect(jsonPath("$.data.isAdvisory").value(true))
+                .andExpect(jsonPath("$.data.disclaimer").value(startsWith(
+                        "Análisis generado con reglas automáticas (IA no disponible).")))
+                .andExpect(jsonPath("$.data.period.from").value(s.from().toString()))
+                .andExpect(jsonPath("$.data.period.to").value(s.to().toString()))
+                .andExpect(jsonPath("$.data.period.zone").value("America/Lima"))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+
+        String resumen = JsonPath.read(body, "$.data.resumen");
+        assertThat(resumen).contains("60 jornadas de 4 operarios")
+                .contains(s.totals().sessionsNearLimit() + " (" + s.totals().sessionsNearLimitPct() + " %)")
+                .contains(s.totals().sessionsExceeded() + " (" + s.totals().sessionsExceededPct() + " %)")
+                .contains("2 operarios con proyección HIGH o CRITICAL").contains("1 CRITICAL");
+
+        List<String> levels = JsonPath.read(body, "$.data.hallazgos[*].nivel");
+        List<String> findings = JsonPath.read(body, "$.data.hallazgos[*].texto");
+        assertThat(levels).first().isEqualTo("CRITICO");
+        assertThat(levels).isSortedAccordingTo(java.util.Comparator.comparingInt(
+                l -> List.of("CRITICO", "ATENCION", "INFO").indexOf(l)));
+        // los textos nombran a los operarios con su nombre de IAM; operariosAfectados sigue con los IDs
+        String name0 = users.findById(workers.get(0)).orElseThrow().getName();
+        String name1 = users.findById(workers.get(1)).orElseThrow().getName();
+        assertThat(findings.get(0)).contains("1 jornada superó el límite").endsWith(": " + name0 + ".");
+        assertThat(findings).anySatisfy(f -> assertThat(f).contains("CRITICAL").contains("de " + name1));
+        assertThat(findings).anySatisfy(f -> assertThat(f).contains("HIGH").contains("de " + name0));
+        assertThat(body).doesNotContain("operario " + workers.get(0)).doesNotContain("operario #");
+        List<String> actions = JsonPath.read(body, "$.data.recomendaciones[*].accion");
+        assertThat(actions.get(0)).contains(name1);
+        assertThat(findings).anySatisfy(f -> assertThat(f).contains("Prensa hidráulica"));
+
+        List<String> priorities = JsonPath.read(body, "$.data.recomendaciones[*].prioridad");
+        assertThat(priorities).first().isEqualTo("ALTA");
+        assertThat(priorities).isSortedAccordingTo(java.util.Comparator.comparingInt(
+                p -> List.of("ALTA", "MEDIA", "BAJA").indexOf(p)));
+        // una acción por cada proyección actual, con el operario afectado
+        List<Integer> firstAffected = JsonPath.read(body, "$.data.recomendaciones[0].operariosAfectados");
+        assertThat(firstAffected.get(0).longValue()).isEqualTo(workers.get(1));
+        List<String> positionNames = JsonPath.read(body, "$.data.recomendaciones[*].puestosAfectados[*].positionName");
+        assertThat(positionNames).contains("Prensa hidráulica");
+        assertThat(JsonPath.<String>read(body, "$.data.calidadDatos")).contains("1 de 60 jornadas tiene cobertura incompleta");
+
+        // nada cambió: las mismas proyecciones antes y después
+        assertThat(analytics.summarize(org, from, null, null).projectedCriticalWorkers())
+                .isEqualTo(s.projectedCriticalWorkers());
     }
 
     /**

@@ -7,15 +7,11 @@ import com.emsafe.aiforecasting.domain.ports.NaturalLanguagePort;
 import com.emsafe.aiforecasting.domain.services.FallbackMessagePolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -27,20 +23,14 @@ public class GeminiRedactionAdapter implements NaturalLanguagePort {
 
     static final int MAX_TEXT_LENGTH = 2000;
     private static final Logger log = LoggerFactory.getLogger(GeminiRedactionAdapter.class);
-    private static final String URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
 
-    private final RestTemplate restTemplate;
-    private final String apiKey;
-    private final String model;
+    private final GeminiClient gemini;
     private final FallbackMessagePolicy fallback;
     private final Clock clock;
 
     public GeminiRedactionAdapter(RestTemplate restTemplate, String apiKey, String model,
                                   FallbackMessagePolicy fallback, Clock clock) {
-        this.restTemplate = restTemplate;
-        this.apiKey = apiKey;
-        this.model = model;
+        this.gemini = new GeminiClient(restTemplate, apiKey, model);
         this.fallback = fallback;
         this.clock = clock;
     }
@@ -55,7 +45,7 @@ public class GeminiRedactionAdapter implements NaturalLanguagePort {
 
     @Override
     public NaturalLanguageRedaction redact(PreventiveAssessment assessment) {
-        if (apiKey == null || apiKey.isBlank()) {
+        if (!gemini.hasKey()) {
             log.warn("gemini.api-key is not configured; using fallback redaction");
             return fallback.redact(assessment, clock.instant());
         }
@@ -77,30 +67,7 @@ public class GeminiRedactionAdapter implements NaturalLanguagePort {
     }
 
     private String call(String prompt) {
-        Map<String, Object> body = Map.of(
-                "system_instruction", Map.of("parts", List.of(Map.of("text", GeminiPromptBuilder.SYSTEM_INSTRUCTION))),
-                "contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", prompt)))),
-                "generationConfig", Map.of("temperature", 0.2, "maxOutputTokens", 400));
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        // La key va en cabecera y no en la URL, para que no quede en logs de acceso.
-        headers.set("x-goog-api-key", apiKey);
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> response = restTemplate.postForObject(
-                String.format(URL, model), new HttpEntity<>(body, headers), Map.class);
-        return extractText(response);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static String extractText(Map<String, Object> response) {
-        if (response == null) return null;
-        if (!(response.get("candidates") instanceof List<?> candidates) || candidates.isEmpty()) return null;
-        if (!(candidates.get(0) instanceof Map<?, ?> first)) return null;
-        if (!(first.get("content") instanceof Map<?, ?> content)) return null;
-        if (!(content.get("parts") instanceof List<?> parts) || parts.isEmpty()) return null;
-        if (!(parts.get(0) instanceof Map<?, ?> part)) return null;
-        Object text = ((Map<String, Object>) part).get("text");
-        return text == null ? null : text.toString();
+        return gemini.generate(GeminiPromptBuilder.SYSTEM_INSTRUCTION, prompt,
+                Map.of("temperature", 0.2, "maxOutputTokens", 400));
     }
 }
