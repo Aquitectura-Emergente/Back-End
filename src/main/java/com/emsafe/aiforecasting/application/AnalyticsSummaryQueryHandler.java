@@ -3,28 +3,23 @@ package com.emsafe.aiforecasting.application;
 import com.emsafe.aiforecasting.domain.model.AnalyticsSummary;
 import com.emsafe.aiforecasting.domain.model.ClosedExposureSession;
 import com.emsafe.aiforecasting.domain.model.PreventiveAssessment;
-import com.emsafe.aiforecasting.domain.model.WorkerExposureSnapshot;
 import com.emsafe.aiforecasting.domain.ports.AssessmentRepository;
 import com.emsafe.aiforecasting.domain.ports.AssessmentSearchCriteria;
 import com.emsafe.aiforecasting.domain.ports.ClosedSessionHistoryPort;
 import com.emsafe.aiforecasting.domain.ports.PageResult;
 import com.emsafe.aiforecasting.domain.ports.PositionCatalogPort;
-import com.emsafe.aiforecasting.domain.ports.WorkerSnapshotRepository;
 import com.emsafe.aiforecasting.domain.services.ExposureAnalyticsCalculator;
 import com.emsafe.shared.exception.BadRequestException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.DateTimeException;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Resumen analítico de una organización. La autorización la hace el controlador con
@@ -36,8 +31,9 @@ import java.util.stream.Collectors;
  *       {@value #MAX_RANGE_DAYS} días, o
  *       {@code from} posterior a {@code to}, es 400.</li>
  *   <li>Zona por defecto {@value #DEFAULT_ZONE}; una zona inválida es 400.</li>
- *   <li>Los operarios críticos proyectados son una foto de ahora (no dependen del periodo) y
- *       excluyen las evaluaciones cuya jornada ya cerró en Personal Dosimetry.</li>
+ *   <li>Los operarios críticos proyectados son una foto de ahora (no dependen del periodo): las
+ *       evaluaciones vigentes de {@link OpenSessionAssessments} (jornadas no terminadas, una por
+ *       operario), igual que {@code critical-workers}.</li>
  * </ul>
  */
 public class AnalyticsSummaryQueryHandler {
@@ -48,23 +44,20 @@ public class AnalyticsSummaryQueryHandler {
     /** Tope de evaluaciones leídas para las recomendaciones del periodo (200 × 50). */
     static final int SEARCH_PAGE_SIZE = 200;
     static final int SEARCH_MAX_PAGES = 50;
-    /** Respaldo si una evaluación activa no tiene snapshot (no debería pasar). */
-    private static final Duration FALLBACK_LOOKBACK = Duration.ofDays(2);
-
     private final ClosedSessionHistoryPort history;
     private final PositionCatalogPort positions;
     private final AssessmentRepository assessments;
-    private final WorkerSnapshotRepository snapshots;
+    private final OpenSessionAssessments openSessions;
     private final ExposureAnalyticsCalculator calculator;
     private final Clock clock;
 
     public AnalyticsSummaryQueryHandler(ClosedSessionHistoryPort history, PositionCatalogPort positions,
-                                        AssessmentRepository assessments, WorkerSnapshotRepository snapshots,
+                                        AssessmentRepository assessments, OpenSessionAssessments openSessions,
                                         ExposureAnalyticsCalculator calculator, Clock clock) {
         this.history = history;
         this.positions = positions;
         this.assessments = assessments;
-        this.snapshots = snapshots;
+        this.openSessions = openSessions;
         this.calculator = calculator;
         this.clock = clock;
     }
@@ -90,7 +83,7 @@ public class AnalyticsSummaryQueryHandler {
 
         List<ClosedExposureSession> closed = history.closedSessions(organizationId, fromInstant, toInstant);
         return calculator.summarize(organizationId, start, end, zoneId, now, closed,
-                openActiveAssessments(organizationId, now),
+                openSessions.current(organizationId),
                 assessedIn(organizationId, fromInstant, toInstant),
                 positions.positionNames(organizationId));
     }
@@ -104,27 +97,6 @@ public class AnalyticsSummaryQueryHandler {
         } catch (DateTimeException e) {
             throw new BadRequestException("zone must be a valid IANA time zone id, e.g. " + DEFAULT_ZONE);
         }
-    }
-
-    /**
-     * Evaluaciones activas cuya jornada sigue abierta. Hoy ninguna se cierra con SESSION_ENDED, así
-     * que se cruzan con las jornadas cerradas desde el inicio de la más antigua.
-     */
-    private List<PreventiveAssessment> openActiveAssessments(Long organizationId, Instant now) {
-        List<PreventiveAssessment> active = assessments.findActiveByOrganizationId(organizationId);
-        if (active.isEmpty()) {
-            return active;
-        }
-        Instant earliest = active.stream()
-                .map(a -> snapshots.findBySessionId(a.getSessionId())
-                        .map(WorkerExposureSnapshot::sessionStartedAt)
-                        .orElse(a.getAssessedAt().minus(FALLBACK_LOOKBACK)))
-                .min(Instant::compareTo)
-                .orElseThrow();
-        Set<String> closedSessionIds = history.closedSessions(organizationId, earliest, now.plusSeconds(1)).stream()
-                .map(ClosedExposureSession::sessionId)
-                .collect(Collectors.toSet());
-        return active.stream().filter(a -> !closedSessionIds.contains(a.getSessionId())).toList();
     }
 
     /** {@code [from, to)}: la búsqueda del repositorio es inclusiva en {@code to}. */

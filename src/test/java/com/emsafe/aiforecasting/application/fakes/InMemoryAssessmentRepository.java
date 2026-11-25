@@ -53,6 +53,15 @@ public class InMemoryAssessmentRepository implements AssessmentRepository {
     }
 
     @Override
+    public List<Long> findOrganizationsWithActiveAssessments() {
+        return store.values().stream()
+                .filter(PreventiveAssessment::isActive)
+                .map(PreventiveAssessment::getOrganizationId)
+                .distinct()
+                .toList();
+    }
+
+    @Override
     public PageResult<PreventiveAssessment> search(AssessmentSearchCriteria c, int page, int size) {
         List<PreventiveAssessment> matches = store.values().stream()
                 .filter(a -> c.organizationId() == null || Objects.equals(a.getOrganizationId(), c.organizationId()))

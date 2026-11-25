@@ -1,5 +1,6 @@
 package com.emsafe.aiforecasting.infrastructure.seed;
 
+import com.emsafe.aiforecasting.application.CloseEndedSessionAssessmentsHandler;
 import com.emsafe.aiforecasting.infrastructure.AiForecastingConfiguration;
 import com.emsafe.aiforecasting.infrastructure.seed.DemoExposurePlan.PlannedSession;
 import com.emsafe.aiforecasting.infrastructure.seed.DemoExposurePlan.Worker;
@@ -85,8 +86,8 @@ public class AiForecastingDemoSeeder {
 
     /** Lo que hizo una pasada. */
     record SeedReport(int workers, int closedSessions, int openSessions, int staleSessionsClosed,
-                      int historicalAlertsSettled) {
-        static final SeedReport SKIPPED = new SeedReport(0, 0, 0, 0, 0);
+                      int historicalAlertsSettled, int endedAssessmentsClosed) {
+        static final SeedReport SKIPPED = new SeedReport(0, 0, 0, 0, 0, 0);
     }
 
     /** Tope de pasadas al drenar el relay de Personal Dosimetry (50 eventos por pasada). */
@@ -103,12 +104,14 @@ public class AiForecastingDemoSeeder {
     /** No existe como bean si {@code emsafe.personal-dosimetry.outbox-relay-enabled=false}. */
     private final ObjectProvider<DosimetryOutboxRelay> dosimetryRelay;
     private final AlarmService alarms;
+    private final CloseEndedSessionAssessmentsHandler endedAssessments;
     private final Clock clock;
 
     public AiForecastingDemoSeeder(UserRepository users, PasswordEncoder passwordEncoder, PlantZoneService zones,
                                    JobPositionService positions, DeviceService deviceService, DeviceCatalog devices,
                                    PersonalDosimetryService dosimetry, ExposureQueryFacade exposures,
                                    ObjectProvider<DosimetryOutboxRelay> dosimetryRelay, AlarmService alarms,
+                                   CloseEndedSessionAssessmentsHandler endedAssessments,
                                    @Qualifier(AiForecastingConfiguration.CLOCK) Clock clock) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
@@ -120,6 +123,7 @@ public class AiForecastingDemoSeeder {
         this.exposures = exposures;
         this.dosimetryRelay = dosimetryRelay;
         this.alarms = alarms;
+        this.endedAssessments = endedAssessments;
         this.clock = clock;
     }
 
@@ -128,9 +132,11 @@ public class AiForecastingDemoSeeder {
         try {
             SeedReport report = seed();
             log.info("AI Forecasting demo seed: {} worker(s), {} closed session(s), {} open session(s), "
-                    + "{} stale session(s) closed, {} historical alert(s) acknowledged and resolved",
+                    + "{} stale session(s) closed, {} historical alert(s) acknowledged and resolved, "
+                    + "{} ended-session assessment(s) closed",
                     report.workers(), report.closedSessions(), report.openSessions(),
-                    report.staleSessionsClosed(), report.historicalAlertsSettled());
+                    report.staleSessionsClosed(), report.historicalAlertsSettled(),
+                    report.endedAssessmentsClosed());
         } catch (RuntimeException e) {
             log.warn("AI Forecasting demo seed failed: {}", e.toString());
         }
@@ -168,6 +174,9 @@ public class AiForecastingDemoSeeder {
         List<String> history = historyAlreadySeeded(org, participants, now)
                 ? List.of() : seedHistory(actor, participants, busy, now);
         int settled = history.isEmpty() ? 0 : settleHistoricalAlerts(participants, Set.copyOf(history));
+        // Las evaluaciones que dejan los avisos del historial son de jornadas ya cerradas: se cierran
+        // con SESSION_ENDED ahora, sin esperar a la tarea programada.
+        int endedClosed = closeEndedAssessments(org);
         // Las de hoy se abren después del drenaje: sus avisos los entrega el relay programado y
         // quedan pendientes, que es lo correcto porque esas jornadas siguen abiertas.
         int open = 0;
@@ -176,7 +185,7 @@ public class AiForecastingDemoSeeder {
                 open++;
             }
         }
-        return new SeedReport(participants.size(), history.size(), open, stale, settled);
+        return new SeedReport(participants.size(), history.size(), open, stale, settled, endedClosed);
     }
 
     // ─── Preparación ─────────────────────────────────────────────────────────
@@ -385,6 +394,15 @@ public class AiForecastingDemoSeeder {
             }
         }
         return settled;
+    }
+
+    private int closeEndedAssessments(Long org) {
+        try {
+            return endedAssessments.closeEnded(org);
+        } catch (RuntimeException e) {
+            log.warn("AI Forecasting demo seed: could not close ended-session assessments: {}", e.toString());
+            return 0;
+        }
     }
 
     /** Pasadas hasta que una no entregue nada (los avisos que llegan antes que su apertura van en la siguiente). */

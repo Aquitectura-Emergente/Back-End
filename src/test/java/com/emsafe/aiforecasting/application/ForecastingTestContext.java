@@ -1,5 +1,6 @@
 package com.emsafe.aiforecasting.application;
 
+import com.emsafe.aiforecasting.application.fakes.InMemoryDosimetrySessions;
 import com.emsafe.aiforecasting.application.commands.ExposureWarningRaisedCommand;
 import com.emsafe.aiforecasting.application.commands.UpsertExposureSnapshotCommand;
 import com.emsafe.aiforecasting.application.fakes.InMemoryAssessmentRepository;
@@ -39,6 +40,10 @@ public class ForecastingTestContext {
     public final InMemoryOutbox outbox = new InMemoryOutbox();
     public final InMemoryProcessedMessages processed = new InMemoryProcessedMessages();
     public final StubNaturalLanguagePort llm = new StubNaturalLanguagePort(clock);
+    /** Jornadas de Personal Dosimetry: por defecto no conoce ninguna (sesiones solo del inbox). */
+    public final InMemoryDosimetrySessions dosimetry = new InMemoryDosimetrySessions();
+    public final OpenSessionAssessments openSessions;
+    public final CloseEndedSessionAssessmentsHandler closeEnded;
 
     public final UpsertExposureSnapshotHandler upsertSnapshot;
     public final TriggerAssessmentHandler trigger;
@@ -66,8 +71,10 @@ public class ForecastingTestContext {
         upsertSnapshot = new UpsertExposureSnapshotHandler(snapshots, processed, clock);
         trigger = new TriggerAssessmentHandler(snapshots, processed, workflow, clock);
         shiftUpdated = new ShiftUpdatedHandler(snapshots, assessments, processed, workflow, clock);
-        assessmentQueries = new AssessmentQueryHandler(assessments);
-        criticalWorkers = new CriticalWorkersQueryHandler(assessments);
+        openSessions = new OpenSessionAssessments(assessments, snapshots, dosimetry, dosimetry, clock);
+        closeEnded = new CloseEndedSessionAssessmentsHandler(assessments, openSessions, clock);
+        assessmentQueries = new AssessmentQueryHandler(assessments, openSessions);
+        criticalWorkers = new CriticalWorkersQueryHandler(openSessions);
         outboxQueries = new OutboxQueryHandler(outbox);
         ack = new AckOutboxEventHandler(outbox, clock);
     }

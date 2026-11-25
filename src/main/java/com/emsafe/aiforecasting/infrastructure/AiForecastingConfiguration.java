@@ -3,6 +3,8 @@ package com.emsafe.aiforecasting.infrastructure;
 import com.emsafe.aiforecasting.application.AckOutboxEventHandler;
 import com.emsafe.aiforecasting.application.AnalyticsSummaryQueryHandler;
 import com.emsafe.aiforecasting.application.AssessmentQueryHandler;
+import com.emsafe.aiforecasting.application.CloseEndedSessionAssessmentsHandler;
+import com.emsafe.aiforecasting.application.OpenSessionAssessments;
 import com.emsafe.aiforecasting.application.CriticalWorkersQueryHandler;
 import com.emsafe.aiforecasting.application.ForecastingAccessPolicy;
 import com.emsafe.aiforecasting.application.ForecastingActorDirectory;
@@ -18,6 +20,7 @@ import com.emsafe.aiforecasting.domain.ports.AssessmentRepository;
 import com.emsafe.aiforecasting.domain.ports.ClosedSessionHistoryPort;
 import com.emsafe.aiforecasting.domain.ports.ForecastingOutboxPort;
 import com.emsafe.aiforecasting.domain.ports.NaturalLanguagePort;
+import com.emsafe.aiforecasting.domain.ports.OpenSessionPort;
 import com.emsafe.aiforecasting.domain.ports.PositionCatalogPort;
 import com.emsafe.aiforecasting.domain.ports.ProcessedMessagePort;
 import com.emsafe.aiforecasting.domain.ports.WorkerSnapshotRepository;
@@ -171,23 +174,38 @@ public class AiForecastingConfiguration {
     }
 
     @Bean
-    AssessmentQueryHandler assessmentQueryHandler(AssessmentRepository assessments) {
-        return new AssessmentQueryHandler(assessments);
+    OpenSessionAssessments openSessionAssessments(AssessmentRepository assessments, WorkerSnapshotRepository snapshots,
+                                                  ClosedSessionHistoryPort history, OpenSessionPort openSessions,
+                                                  @Qualifier(CLOCK) Clock clock) {
+        return new OpenSessionAssessments(assessments, snapshots, history, openSessions, clock);
     }
 
     @Bean
-    CriticalWorkersQueryHandler criticalWorkersQueryHandler(AssessmentRepository assessments) {
-        return new CriticalWorkersQueryHandler(assessments);
+    CloseEndedSessionAssessmentsHandler closeEndedSessionAssessmentsHandler(AssessmentRepository assessments,
+                                                                            OpenSessionAssessments openSessions,
+                                                                            @Qualifier(CLOCK) Clock clock) {
+        return new CloseEndedSessionAssessmentsHandler(assessments, openSessions, clock);
+    }
+
+    @Bean
+    AssessmentQueryHandler assessmentQueryHandler(AssessmentRepository assessments,
+                                                  OpenSessionAssessments openSessions) {
+        return new AssessmentQueryHandler(assessments, openSessions);
+    }
+
+    @Bean
+    CriticalWorkersQueryHandler criticalWorkersQueryHandler(OpenSessionAssessments openSessions) {
+        return new CriticalWorkersQueryHandler(openSessions);
     }
 
     @Bean
     AnalyticsSummaryQueryHandler analyticsSummaryQueryHandler(ClosedSessionHistoryPort history,
                                                               PositionCatalogPort positions,
                                                               AssessmentRepository assessments,
-                                                              WorkerSnapshotRepository snapshots,
+                                                              OpenSessionAssessments openSessions,
                                                               ExposureAnalyticsCalculator calculator,
                                                               @Qualifier(CLOCK) Clock clock) {
-        return new AnalyticsSummaryQueryHandler(history, positions, assessments, snapshots, calculator, clock);
+        return new AnalyticsSummaryQueryHandler(history, positions, assessments, openSessions, calculator, clock);
     }
 
     @Bean
