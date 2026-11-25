@@ -1,6 +1,7 @@
 package com.emsafe.aiforecasting.infrastructure;
 
 import com.emsafe.aiforecasting.application.AckOutboxEventHandler;
+import com.emsafe.aiforecasting.application.AnalyticsSummaryQueryHandler;
 import com.emsafe.aiforecasting.application.AssessmentQueryHandler;
 import com.emsafe.aiforecasting.application.CriticalWorkersQueryHandler;
 import com.emsafe.aiforecasting.application.ForecastingAccessPolicy;
@@ -14,11 +15,14 @@ import com.emsafe.aiforecasting.application.TriggerAssessmentHandler;
 import com.emsafe.aiforecasting.application.UpsertExposureSnapshotHandler;
 import com.emsafe.aiforecasting.domain.model.ForecastingThresholds;
 import com.emsafe.aiforecasting.domain.ports.AssessmentRepository;
+import com.emsafe.aiforecasting.domain.ports.ClosedSessionHistoryPort;
 import com.emsafe.aiforecasting.domain.ports.ForecastingOutboxPort;
 import com.emsafe.aiforecasting.domain.ports.NaturalLanguagePort;
+import com.emsafe.aiforecasting.domain.ports.PositionCatalogPort;
 import com.emsafe.aiforecasting.domain.ports.ProcessedMessagePort;
 import com.emsafe.aiforecasting.domain.ports.WorkerSnapshotRepository;
 import com.emsafe.aiforecasting.domain.services.CriticalityAssessmentService;
+import com.emsafe.aiforecasting.domain.services.ExposureAnalyticsCalculator;
 import com.emsafe.aiforecasting.domain.services.ExposureProjectionService;
 import com.emsafe.aiforecasting.domain.services.FallbackMessagePolicy;
 import com.emsafe.aiforecasting.domain.services.RotationCandidateSelector;
@@ -88,6 +92,11 @@ public class AiForecastingConfiguration {
     @Bean
     FallbackMessagePolicy fallbackMessagePolicy() {
         return new FallbackMessagePolicy();
+    }
+
+    @Bean
+    ExposureAnalyticsCalculator exposureAnalyticsCalculator(ForecastingProperties properties) {
+        return new ExposureAnalyticsCalculator(properties.getNearLimitRatio());
     }
 
     // ─── Adaptadores ─────────────────────────────────────────────────────────
@@ -162,6 +171,16 @@ public class AiForecastingConfiguration {
     @Bean
     CriticalWorkersQueryHandler criticalWorkersQueryHandler(AssessmentRepository assessments) {
         return new CriticalWorkersQueryHandler(assessments);
+    }
+
+    @Bean
+    AnalyticsSummaryQueryHandler analyticsSummaryQueryHandler(ClosedSessionHistoryPort history,
+                                                              PositionCatalogPort positions,
+                                                              AssessmentRepository assessments,
+                                                              WorkerSnapshotRepository snapshots,
+                                                              ExposureAnalyticsCalculator calculator,
+                                                              @Qualifier(CLOCK) Clock clock) {
+        return new AnalyticsSummaryQueryHandler(history, positions, assessments, snapshots, calculator, clock);
     }
 
     @Bean

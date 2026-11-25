@@ -19,6 +19,11 @@ public class ForecastingProperties {
     private BigDecimal criticalMarginRatio = new BigDecimal("0.10");
     private BigDecimal moderateProjectedRatio = new BigDecimal("0.90");
     private BigDecimal safeCandidateRatio = new BigDecimal("0.90");
+    /**
+     * Analítica: una jornada "termina cerca del límite" si su índice final es ≥ este ratio del
+     * límite. En (0, 1]; un valor fuera de rango impide arrancar.
+     */
+    private BigDecimal nearLimitRatio = new BigDecimal("0.90");
     private String modelId = "LINEAR_RATE";
     private String modelVersion = "1";
     /** Crea snapshots de demostración al arrancar. */
