@@ -1,5 +1,7 @@
 package com.emsafe.aiforecasting;
 
+import com.emsafe.iam.domain.model.AppUser;
+import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
 import com.emsafe.personaldosimetry.domain.model.DosimetryEvent;
 import com.emsafe.personaldosimetry.infrastructure.DosimetryOutboxRelay;
@@ -16,6 +18,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -25,6 +28,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
@@ -72,6 +76,7 @@ class AiForecastingApiIntegrationTest {
 
     @Autowired private MockMvc mvc;
     @Autowired private UserRepository users;
+    @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private DosimetryEventRepository dosimetryEvents;
     @Autowired private ApplicationEventPublisher eventPublisher;
     /** El del contexto, el mismo que serializa los payloads del outbox en producción. */
@@ -85,6 +90,10 @@ class AiForecastingApiIntegrationTest {
     private String companyToken;
     private String otherCompanyToken;
     private String technicianToken;
+    /** SSO_RESPONSIBLE sembrado de Quantum (organización = companyOrg). */
+    private String ssoToken;
+    /** WORKER sembrado de Quantum (organización = companyOrg). */
+    private String workerToken;
     private long companyOrg;
     private long otherCompanyOrg;
 
@@ -94,8 +103,11 @@ class AiForecastingApiIntegrationTest {
         companyToken = token("ops@quantumdyn.com", "client123");
         otherCompanyToken = token("facilities@harbormed.com", "client123");
         technicianToken = token("marcus@emsafe.com", "tech123");
+        ssoToken = token("sso@quantumdyn.com", "sso12345");
+        workerToken = token("operario1@quantumdyn.com", "worker123");
         companyOrg = users.findByEmail("ops@quantumdyn.com").orElseThrow().getId();
         otherCompanyOrg = users.findByEmail("facilities@harbormed.com").orElseThrow().getId();
+        assertThat(users.findByEmail("sso@quantumdyn.com").orElseThrow().getOrganizationId()).isEqualTo(companyOrg);
     }
 
     private String token(String email, String password) throws Exception {
@@ -243,6 +255,95 @@ class AiForecastingApiIntegrationTest {
 
         // técnico
         getAs(technicianToken, "/assessments/" + id).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void ssoOfTheSameOrganizationReadsEveryQuery() throws Exception {
+        String id = seedScenario(companyOrg);
+        String org = String.valueOf(companyOrg);
+
+        getAs(ssoToken, "/assessments/" + id).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.organizationId").value(companyOrg));
+        getAs(ssoToken, "/projections/workers/" + w101).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.workerId").value(w101));
+        getAs(ssoToken, "/assessments", "organizationId", org, "sessionId", "S-" + run + "-" + w101)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1));
+        getAs(ssoToken, "/projections/critical-workers", "organizationId", org)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[*].workerId", hasItems(w300, w101, w200)));
+        // sin organizationId usa la suya, no la de todos
+        getAs(ssoToken, "/assessments", "sessionId", "S-" + run + "-" + w101)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1));
+        getAs(ssoToken, "/projections/critical-workers")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[*].workerId", hasItems(w300, w101, w200)))
+                .andExpect(jsonPath("$.data.content[*].organizationId", everyItem(is((int) companyOrg))));
+    }
+
+    @Test
+    void ssoOfAnotherOrganizationIs403() throws Exception {
+        String id = seedScenario(otherCompanyOrg);
+        String other = String.valueOf(otherCompanyOrg);
+
+        getAs(ssoToken, "/assessments/" + id).andExpect(status().isForbidden());
+        getAs(ssoToken, "/projections/workers/" + w101).andExpect(status().isForbidden());
+        getAs(ssoToken, "/projections/critical-workers", "organizationId", other).andExpect(status().isForbidden());
+        getAs(ssoToken, "/assessments", "organizationId", other).andExpect(status().isForbidden());
+        // sin organizationId solo ve la suya: nada de lo sembrado en la otra organización
+        getAs(ssoToken, "/assessments", "sessionId", "S-" + run + "-" + w101)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(0));
+        getAs(ssoToken, "/projections/critical-workers")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[*].workerId", not(hasItem(w101))));
+    }
+
+    @Test
+    void ssoCannotUseInboxOrOutbox() throws Exception {
+        postAs(ssoToken, "/inbox/exposure-snapshot", snapshot("sso-" + run, companyOrg, w101, 10, "1"))
+                .andExpect(status().isForbidden());
+        getAs(ssoToken, "/outbox").andExpect(status().isForbidden());
+        postAs(ssoToken, "/outbox/x/ack", "").andExpect(status().isForbidden());
+    }
+
+    @Test
+    void ssoWithoutOrganizationIs403Not500() throws Exception {
+        String id = seedScenario(companyOrg);
+        String email = "sso-noorg-" + run + "@x.test";
+        users.save(AppUser.builder().email(email).passwordHash(passwordEncoder.encode("sso12345"))
+                .name("SSO sin organización").initials("SN").role(Role.SSO_RESPONSIBLE).status("active")
+                .organizationId(null).joinDate(LocalDate.of(2026, 11, 1)).build());
+        String orphanToken = token(email, "sso12345");
+
+        getAs(orphanToken, "/assessments/" + id).andExpect(status().isForbidden());
+        getAs(orphanToken, "/assessments").andExpect(status().isForbidden());
+        getAs(orphanToken, "/projections/workers/" + w101).andExpect(status().isForbidden());
+        getAs(orphanToken, "/projections/critical-workers").andExpect(status().isForbidden());
+        getAs(orphanToken, "/projections/critical-workers", "organizationId", String.valueOf(companyOrg))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void workerOfTheSameOrganizationIs403() throws Exception {
+        String id = seedScenario(companyOrg);
+        String org = String.valueOf(companyOrg);
+
+        getAs(workerToken, "/assessments/" + id).andExpect(status().isForbidden());
+        getAs(workerToken, "/assessments").andExpect(status().isForbidden());
+        getAs(workerToken, "/assessments", "organizationId", org).andExpect(status().isForbidden());
+        getAs(workerToken, "/projections/workers/" + w101).andExpect(status().isForbidden());
+        getAs(workerToken, "/projections/critical-workers").andExpect(status().isForbidden());
+        getAs(workerToken, "/projections/critical-workers", "organizationId", org).andExpect(status().isForbidden());
+        getAs(workerToken, "/outbox").andExpect(status().isForbidden());
+    }
+
+    @Test
+    void technicianIs403OnAssessmentsAndProjections() throws Exception {
+        seedScenario(companyOrg);
+
+        getAs(technicianToken, "/assessments").andExpect(status().isForbidden());
+        getAs(technicianToken, "/projections/workers/" + w101).andExpect(status().isForbidden());
+        getAs(technicianToken, "/projections/critical-workers", "organizationId", String.valueOf(companyOrg))
+                .andExpect(status().isForbidden());
     }
 
     // ─── Flujo funcional (ADMIN) ─────────────────────────────────────────────

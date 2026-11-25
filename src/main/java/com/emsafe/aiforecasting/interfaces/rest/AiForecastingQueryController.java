@@ -26,7 +26,8 @@ import java.time.Instant;
 @RestController
 @RequestMapping("/api/v1/ai-forecasting")
 @Tag(name = "AI Forecasting - Consultas",
-        description = "Evaluaciones y proyecciones. ADMIN, o la organización dueña sobre sus propios datos.")
+        description = "Evaluaciones y proyecciones. ADMIN, o la organización dueña (cuenta CLIENT company o su "
+                + "SSO_RESPONSIBLE) sobre sus propios datos. WORKER y TECHNICIAN: 403.")
 public class AiForecastingQueryController {
 
     private final AssessmentQueryHandler assessments;
