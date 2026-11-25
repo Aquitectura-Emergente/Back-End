@@ -1,6 +1,14 @@
 package com.emsafe.aiforecasting.infrastructure.seed;
 
 import com.emsafe.aiforecasting.application.AnalyticsSummaryQueryHandler;
+import com.emsafe.aiforecasting.application.CloseEndedSessionAssessmentsHandler;
+import com.emsafe.aiforecasting.application.CriticalWorkersQueryHandler;
+import com.emsafe.aiforecasting.domain.model.AssessmentStatus;
+import com.emsafe.aiforecasting.domain.model.CloseReason;
+import com.emsafe.aiforecasting.domain.model.PreventiveAssessment;
+import com.emsafe.aiforecasting.domain.ports.AssessmentRepository;
+import com.emsafe.aiforecasting.domain.ports.AssessmentSearchCriteria;
+import com.emsafe.aiforecasting.infrastructure.SessionEndReconciliationJob;
 import com.emsafe.aiforecasting.domain.model.AnalyticsSummary;
 import com.emsafe.aiforecasting.domain.model.CriticalityLevel;
 import com.emsafe.alerts.application.AlarmService;
@@ -14,6 +22,7 @@ import com.emsafe.personaldosimetry.application.ExposureQueryFacade.ClosedSessio
 import com.emsafe.personaldosimetry.infrastructure.DosimetryOutboxRelay;
 import com.emsafe.plantconfiguration.application.JobPositionService;
 import com.jayway.jsonpath.JsonPath;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
@@ -37,6 +46,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -76,6 +86,16 @@ class AiForecastingDemoSeederTest {
     @Autowired private AlarmService alarms;
     @Autowired private AlertEscalationJob escalation;
     @Autowired private MockMvc mvc;
+    @Autowired private CriticalWorkersQueryHandler criticalWorkers;
+    @Autowired private AssessmentRepository assessments;
+    @Autowired private CloseEndedSessionAssessmentsHandler endedHandler;
+    /** Se construye a mano: el bean está apagado en el perfil de test (session-end-reconcile-enabled=false). */
+    private SessionEndReconciliationJob reconciliation;
+
+    @BeforeEach
+    void buildReconciliation() {
+        reconciliation = new SessionEndReconciliationJob(endedHandler);
+    }
 
     private static final String PD = "/api/v1/personal-dosimetry";
 
@@ -177,6 +197,49 @@ class AiForecastingDemoSeederTest {
                 Map.entry(workers.get(0), CriticalityLevel.HIGH));
         assertThat(s.projectedCriticalWorkers()).extracting(AnalyticsSummary.ProjectedCritical::workerId)
                 .containsExactly(workers.get(1), workers.get(0));
+    }
+
+    /**
+     * Cada aviso del historial dejaba una evaluación activa para siempre (una por jornada), y
+     * critical-workers devolvía al mismo operario varias veces. Ahora: solo las 2 de hoy, sin duplicados,
+     * y las del historial quedan cerradas con SESSION_ENDED.
+     */
+    @Test
+    void criticalWorkersShowsOnlyTodaysTwoAndHistoricalAssessmentsAreClosedWithSessionEnded() throws Exception {
+        drainRelay();
+        long org = org();
+        List<Long> workers = demoWorkerIds();
+        Set<String> historySessions = demoHistory().stream().map(ClosedSession::sessionId)
+                .collect(Collectors.toSet());
+
+        List<PreventiveAssessment> critical = criticalWorkers.list(org, null, 0, 200).content();
+        assertThat(critical).extracting(PreventiveAssessment::getWorkerId)
+                .containsExactly(workers.get(1), workers.get(0));
+        assertThat(critical).extracting(PreventiveAssessment::getCriticality)
+                .containsExactly(CriticalityLevel.CRITICAL, CriticalityLevel.HIGH);
+        assertThat(critical).extracting(PreventiveAssessment::getSessionId).doesNotContainAnyElementsOf(historySessions);
+
+        // por HTTP, como lo pide el portal del SSO
+        String token = ssoToken();
+        mvc.perform(as(token, get("/api/v1/ai-forecasting/projections/critical-workers")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(2))
+                .andExpect(jsonPath("$.data.content[*].workerId", contains(
+                        workers.get(1).intValue(), workers.get(0).intValue())));
+        String todays = critical.get(1).getId();
+        mvc.perform(as(token, get("/api/v1/ai-forecasting/projections/workers/" + workers.get(0))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(todays));
+
+        // las evaluaciones del historial (una por aviso: 9) quedan cerradas por fin de jornada (las cerró
+        // la semilla). La excedencia no genera evaluación: AI Forecasting solo recibe los avisos.
+        List<PreventiveAssessment> historical = assessments.search(
+                new AssessmentSearchCriteria(org, null, null, null, null), 0, 200).content().stream()
+                .filter(a -> historySessions.contains(a.getSessionId())).toList();
+        assertThat(historical).hasSize(9).allSatisfy(a -> {
+            assertThat(a.getStatus()).isEqualTo(AssessmentStatus.CLOSED);
+            assertThat(a.getCloseReason()).isEqualTo(CloseReason.SESSION_ENDED);
+        });
+        assertThat(reconciliation.reconcileOnce()).isZero(); // ya no queda nada por cerrar
     }
 
     /**

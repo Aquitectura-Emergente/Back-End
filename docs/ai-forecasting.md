@@ -70,7 +70,33 @@ PROJECTED ──► ASSESSED ──► RECOMMENDED ──► CLOSED
   de datos lo garantiza con la columna `active_session_key` y una restricción `UNIQUE`.
 - **Recomendaciones.** Solo las reciben las evaluaciones HIGH o CRITICAL, y siempre van dirigidas
   al operario evaluado.
-- **Motivos de cierre** (`CloseReason`): `SUPERSEDED` o `SESSION_ENDED`.
+- **Motivos de cierre** (`CloseReason`): `SUPERSEDED` (nuevo disparo de la misma sesión) o
+  `SESSION_ENDED` (la jornada terminó en Personal Dosimetry; ver abajo).
+
+### Evaluaciones vigentes y `SESSION_ENDED`
+
+Una evaluación es activa por **sesión**, no por operario, y este contexto no recibe el cierre de
+jornada. Antes, cada jornada con aviso dejaba su evaluación activa para siempre, y
+`critical-workers` devolvía al mismo operario una vez por cada jornada vieja.
+
+`OpenSessionAssessments` decide qué evaluaciones activas siguen **vigentes**, cruzando con Personal
+Dosimetry por sus fachadas públicas. Una jornada terminó si:
+
+- Personal Dosimetry la tiene `CLOSED` (`ExposureQueryFacade.closedSessions`), o
+- el operario tiene **otra** jornada `OPEN` (`ExposureQueryFacade.currentExposure`): solo puede
+  tener una abierta a la vez.
+
+De las vigentes queda **una por operario**, la más reciente. Una sesión que Personal Dosimetry no
+conoce (llegada solo por el inbox REST, como en la guía de Swagger) no se da por terminada.
+
+| Dónde se usa | Efecto |
+| --- | --- |
+| `projections/critical-workers` | Solo evaluaciones vigentes, una por operario |
+| `projections/workers/{workerId}` | La vigente del operario; 404 si no tiene |
+| `analytics` (`projectedCriticalWorkers`) | El mismo criterio |
+| `SessionEndReconciliationJob` (cada minuto) y la semilla de demo | Cierran las de jornadas terminadas con `closeReason = SESSION_ENDED` |
+
+`assessments` y `assessments/{id}` no filtran: son el historial completo, incluidas las cerradas.
 
 Cada evaluación guarda la versión del modelo que la produjo (`modelId`, `version` y el código
 `LINEAR_RATE_V1`), el `limitVersionId` recibido de Personal Dosimetry y el `triggerEventId` del
@@ -251,7 +277,7 @@ el periodo y la zona (un formato de fecha mal escrito sí da 400 antes, al conve
 | --- | --- | --- |
 | `totals`, `perWorker`, `weeklyTrend`, `topPositions`, `workersAboveWarning` | `ExposureQueryFacade.closedSessions` (Personal Dosimetry): jornadas `CLOSED` con `endedAt` en el periodo | Dato medido. Las banderas de advertencia y excedencia son las de Personal Dosimetry |
 | `topPositions[].positionName` | `JobPositionService.listFor` (Plant Configuration) | Si falla o no lo conoce, el nombre queda nulo y la respuesta no falla |
-| `projectedCriticalWorkers` | Evaluaciones activas HIGH/CRITICAL de este contexto | Foto de **ahora**, no depende del periodo. Excluye las de jornadas que ya cerraron en Personal Dosimetry |
+| `projectedCriticalWorkers` | Evaluaciones vigentes HIGH/CRITICAL de este contexto | Foto de **ahora**, no depende del periodo. Mismo criterio que `critical-workers`: jornadas no terminadas, una por operario |
 | `recommendations` | Evaluaciones con `assessedAt` en el periodo | Por jornada cuenta solo la evaluación más reciente |
 
 Reglas:
@@ -432,6 +458,8 @@ rango impide arrancar la aplicación.
 | `emsafe.ai-forecasting.seed-demo` | `false` | [Semilla de demo](#semilla-de-demo) de Quantum. Nunca en producción |
 | `emsafe.ai-forecasting.outbox-relay-enabled` | `true` | Relay de `af_outbox` (`false` en el perfil de test) |
 | `emsafe.ai-forecasting.outbox-relay-delay-ms` | `30000` | Pausa entre pasadas del relay |
+| `emsafe.ai-forecasting.session-end-reconcile-enabled` | `true` | Cierre con `SESSION_ENDED` de las evaluaciones de jornadas terminadas (`false` en el perfil de test) |
+| `emsafe.ai-forecasting.session-end-reconcile-delay-ms` | `60000` | Pausa entre pasadas de ese cierre |
 
 ## Persistencia
 
@@ -609,7 +637,7 @@ $env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-17.0.21.9-hotspot'   # o
 | Capa | Clases |
 | --- | --- |
 | Dominio (sin Spring) | `ExposureProjectionServiceTest`, `RotationCandidateSelectorTest`, `CriticalityAssessmentServiceTest`, `RotationRecommendationServiceTest`, `PreventiveAssessmentTest`, `FallbackMessagePolicyTest`, `WorkerExposureSnapshotTest`, `AssessmentPriorityTest`, `ValueObjectsTest`, `ExposureAnalyticsCalculatorTest` y `DomainPurityTest` (falla si el dominio importa Spring, JPA o Lombok) |
-| Aplicación, con fakes en memoria | `TriggerAssessmentHandlerTest`, `UpsertExposureSnapshotHandlerTest`, `ShiftUpdatedHandlerTest`, `QueryHandlersTest`, `OutboxHandlersTest`, `ForecastingAccessPolicyTest` (incluye SSO), `AnalyticsSummaryQueryHandlerTest` |
+| Aplicación, con fakes en memoria | `TriggerAssessmentHandlerTest`, `UpsertExposureSnapshotHandlerTest`, `ShiftUpdatedHandlerTest`, `QueryHandlersTest`, `OutboxHandlersTest`, `ForecastingAccessPolicyTest` (incluye SSO), `AnalyticsSummaryQueryHandlerTest`, `OpenSessionAssessmentsTest` (vigentes y cierre con `SESSION_ENDED`) |
 | Infraestructura | `AiForecastingPersistenceTest` (`@DataJpaTest` sobre H2), `GeminiRedactionAdapterTest` (`MockRestServiceServer`: éxito, timeout, vacío, error), `NaturalLanguagePortWiringTest` (qué adaptador según `llm.enabled` y la key), `ForecastingOutboxRelayTest`, `IamForecastingActorDirectoryTest`, `AnalyticsAdaptersTest`, `ShiftUpdatedEventListenerTest`, `ForecastingPropertiesTest`, `DemoExposurePlanTest`, `AiForecastingDemoSeederTest` (semilla de punta a punta con el relay de Personal Dosimetry, alertas y escalamiento) |
 | REST | `AiForecastingControllerTest` (contrato web y Swagger), `AiForecastingApiIntegrationTest` (JWT real por login: acceso por rol incluido SSO y WORKER, flujo, contrato de Occupational Health, ack, duplicados y 400/404/409/422) y `AiForecastingAnalyticsApiTest` (analítica con JWT real) |
 
@@ -658,8 +686,11 @@ historial no aparezca como actual:
 2. **Alertas del historial.** Las 10 alertas (9 de advertencia y 1 danger) se acusan como su
    operario y se resuelven en el acto, antes de la ventana de 60 s del escalamiento automático:
    nada se escala al SSO.
-3. **Jornadas de hoy.** Se abren después; sus 2 alertas de advertencia quedan **pendientes**,
-   porque esas jornadas siguen abiertas.
+3. **Evaluaciones del historial.** Las 9 que dejan sus avisos se cierran en el acto con
+   `SESSION_ENDED`, sin esperar a la tarea programada.
+4. **Jornadas de hoy.** Se abren después; sus 2 alertas de advertencia quedan **pendientes**,
+   porque esas jornadas siguen abiertas. `critical-workers` devuelve exactamente esas 2 (operario3
+   CRITICAL y operario1 HIGH).
 
 **Idempotente.** Si los operarios demo ya tienen jornadas en la ventana, el historial no se
 repite. Una jornada abierta de un arranque anterior que ya cumplió sus 8 h se cierra y se abre la
@@ -718,7 +749,7 @@ Todo en proceso (sin broker). Ningún adaptador lee tablas de otro contexto.
 | Dirección | Pieza | Qué hace |
 | --- | --- | --- |
 | Personal Dosimetry → AI Forecasting | `DosimetryOutboxRelay` (PD) publica; `DosimetryInboxEventListener` (AF) consume | `ExposureSessionOpened` → `UpsertExposureSnapshotCommand` (snapshot con `zoneId` nulo); `ExposureWarningRaised` → `ExposureWarningRaisedCommand` (evaluación). Síncrono y `REQUIRES_NEW`: un fallo, por ejemplo un 409 porque el aviso llegó antes que la apertura, deja el evento pendiente en PD y se reintenta. Idempotencia por `af_processed_message` |
-| Personal Dosimetry → AI Forecasting | `ExposureQueryFacade.closedSessions` | Histórico de jornadas cerradas para la analítica (solo lectura) |
+| Personal Dosimetry → AI Forecasting | `ExposureQueryFacade.closedSessions` y `currentExposure` | Histórico de jornadas cerradas para la analítica, y qué jornadas terminaron para las [evaluaciones vigentes](#evaluaciones-vigentes-y-session_ended) (solo lectura) |
 | Occupational Health → AI Forecasting | `ShiftUpdatedEventListener` | `ShiftUpdated` → `ShiftUpdatedHandler` (zona, puesto y recálculo de la evaluación activa). `AFTER_COMMIT` y `REQUIRES_NEW`; un 409 (sesión sin snapshot) se registra y no se propaga |
 | AI Forecasting → Occupational Health | `ForecastingOutboxRelay` | `RotationSuggested` → inbox de OH (propuesta de mitigación), conservando `eventId` y `correlationId`. `PredictiveRiskDetected` es interno (ver [Eventos salientes](#eventos-salientes)) |
 | Plant Configuration → AI Forecasting | `JobPositionService.listFor` | Nombres de puesto en la analítica |
@@ -731,10 +762,18 @@ Todo en proceso (sin broker). Ningún adaptador lee tablas de otro contexto.
 
 ## Pendientes conocidos
 
-- **`SESSION_ENDED` no se aplica.** Ninguna evaluación se cierra al terminar la jornada, así que
-  `projections/critical-workers` y `projections/workers/{id}` pueden mostrar jornadas ya cerradas.
-  La analítica sí las excluye. Arreglarlo necesita recibir el cierre de jornada (por ejemplo, un
-  `ExposureSessionClosedCommand` propio que publique el relay de Personal Dosimetry).
+- **Cierre de jornada por consulta, no por evento.** Este contexto no recibe el cierre de jornada,
+  así que lo averigua en Personal Dosimetry (ver [Evaluaciones vigentes](#evaluaciones-vigentes-y-session_ended)):
+  las consultas filtran al instante y `SessionEndReconciliationJob` cierra con `SESSION_ENDED`
+  cada minuto. Límites de esa vía:
+  - una jornada en `CLOSING` (cerrada pero sin finalizar) sigue vigente hasta que se finaliza o el
+    operario abre otra;
+  - el cierre guardado llega con hasta un minuto de retraso;
+  - el costo es una consulta a Personal Dosimetry por operario con evaluación activa.
+
+  La vía limpia sería que el relay de Personal Dosimetry entregue también `ExposureSessionClosed` a
+  este contexto (un `ExposureSessionClosedCommand` propio, como ya hace con los avisos). Requiere un
+  cambio en `DosimetryOutboxRelay` (Matias); el filtro seguiría igual como respaldo.
 - **404 antes que 403.** En `assessments/{id}` y `projections/workers/{workerId}`, un id inexistente
   da 404 antes de mirar la organización: un usuario de otra organización puede distinguir "no
   existe" de "no es tuyo".

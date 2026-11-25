@@ -64,6 +64,11 @@ public class JpaAssessmentRepositoryAdapter implements AssessmentRepository {
     }
 
     @Override
+    public List<Long> findOrganizationsWithActiveAssessments() {
+        return jpa.findOrganizationIdsWithStatusNot(AssessmentStatus.CLOSED);
+    }
+
+    @Override
     public PageResult<PreventiveAssessment> search(AssessmentSearchCriteria criteria, int page, int size) {
         Page<PreventiveAssessmentEntity> result = jpa.findAll(matching(criteria),
                 PageRequest.of(page, size, Sort.by(Sort.Order.desc("assessedAt"), Sort.Order.asc("id"))));

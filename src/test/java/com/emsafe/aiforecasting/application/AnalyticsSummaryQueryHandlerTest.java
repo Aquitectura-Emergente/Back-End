@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static com.emsafe.aiforecasting.application.ForecastingTestContext.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,7 +29,9 @@ class AnalyticsSummaryQueryHandlerTest {
     private final FakeHistory history = new FakeHistory();
     private Map<Long, String> positionNames = Map.of();
     private final AnalyticsSummaryQueryHandler handler = new AnalyticsSummaryQueryHandler(history,
-            org -> positionNames, ctx.assessments, ctx.snapshots,
+            org -> positionNames, ctx.assessments,
+            new OpenSessionAssessments(ctx.assessments, ctx.snapshots, history, (org, worker) -> Optional.empty(),
+                    ctx.clock),
             new ExposureAnalyticsCalculator(new BigDecimal("0.90")), ctx.clock);
 
     /** Histórico en memoria con la semántica del puerto: endedAt en [from, to). Registra cada llamada. */

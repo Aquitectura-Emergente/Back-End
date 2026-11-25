@@ -3,6 +3,8 @@ package com.emsafe.aiforecasting.infrastructure.persistence;
 import com.emsafe.aiforecasting.domain.model.AssessmentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -17,4 +19,7 @@ public interface AssessmentJpaRepository extends JpaRepository<PreventiveAssessm
             Long workerId, AssessmentStatus status);
 
     List<PreventiveAssessmentEntity> findByOrganizationIdAndStatusNot(Long organizationId, AssessmentStatus status);
+
+    @Query("select distinct a.organizationId from PreventiveAssessmentEntity a where a.status <> :status")
+    List<Long> findOrganizationIdsWithStatusNot(@Param("status") AssessmentStatus status);
 }

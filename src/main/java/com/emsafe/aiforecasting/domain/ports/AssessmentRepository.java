@@ -21,5 +21,8 @@ public interface AssessmentRepository {
     /** Evaluaciones no cerradas de una organización. */
     List<PreventiveAssessment> findActiveByOrganizationId(Long organizationId);
 
+    /** Organizaciones que tienen al menos una evaluación no cerrada (para cerrar las de jornadas terminadas). */
+    List<Long> findOrganizationsWithActiveAssessments();
+
     PageResult<PreventiveAssessment> search(AssessmentSearchCriteria criteria, int page, int size);
 }
