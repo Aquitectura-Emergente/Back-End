@@ -64,7 +64,8 @@ class PeriodInsightsQueryHandlerTest {
 
     private final CountingPort port = new CountingPort();
     private final PeriodInsightsQueryHandler handler =
-            new PeriodInsightsQueryHandler(summaries, port, directory, fallback, ctx.clock, Duration.ofMinutes(10));
+            new PeriodInsightsQueryHandler(summaries, port, directory, fallback, ctx.clock, Duration.ofMinutes(10),
+                    Duration.ofMinutes(1));
 
     @Test
     void reusesTheSummaryOfThePeriod() {
@@ -145,6 +146,38 @@ class PeriodInsightsQueryHandlerTest {
 
         assertThat(i.generatedBy()).isEqualTo(RedactionSource.FALLBACK);
         assertThat(i).isEqualTo(fallback.analyze(port.received.get(0), port.names.get(0), ctx.clock.instant()));
+    }
+
+    @Test
+    void withTheQuotaExceededTheFallbackIsCachedForOnlyOneMinute() {
+        port.failure = new com.emsafe.aiforecasting.domain.model.LlmQuotaExceededException("gemini-3.5-flash-lite");
+
+        PeriodInsights first = handler.analyze(ORG, FROM, TO, "UTC", false);
+        assertThat(first.generatedBy()).isEqualTo(RedactionSource.FALLBACK);
+
+        ctx.clock.advance(Duration.ofSeconds(59));
+        assertThat(handler.analyze(ORG, FROM, TO, "UTC", false)).isSameAs(first);
+        assertThat(port.received).hasSize(1);
+
+        // pasado el minuto se vuelve a probar el LLM; si ya responde, se guarda los 10 min normales
+        ctx.clock.advance(Duration.ofSeconds(1));
+        port.failure = null;
+        PeriodInsights retried = handler.analyze(ORG, FROM, TO, "UTC", false);
+        assertThat(retried).isNotSameAs(first);
+        assertThat(port.received).hasSize(2);
+        ctx.clock.advance(Duration.ofMinutes(9));
+        assertThat(handler.analyze(ORG, FROM, TO, "UTC", false)).isSameAs(retried);
+    }
+
+    @Test
+    void otherFailuresKeepTheTenMinuteCache() {
+        port.failure = new IllegalStateException("boom");
+
+        PeriodInsights first = handler.analyze(ORG, FROM, TO, "UTC", false);
+        ctx.clock.advance(Duration.ofMinutes(9));
+
+        assertThat(handler.analyze(ORG, FROM, TO, "UTC", false)).isSameAs(first);
+        assertThat(port.received).hasSize(1);
     }
 
     @Test

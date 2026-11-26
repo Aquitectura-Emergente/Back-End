@@ -33,14 +33,32 @@ public class ForecastingProperties {
     @Getter
     @Setter
     public static class Llm {
-        /** Si es false no se llama a Gemini y se usa siempre la plantilla. */
+        /** Interruptor general: si es false no se llama a Gemini y se usan siempre la plantilla y las reglas. */
         private boolean enabled = false;
-        private int timeoutMs = 5000;
+        /**
+         * Redacción de cada evaluación con Gemini (solo si {@code enabled}). Apagada por defecto: es una
+         * llamada por aviso y agota pronto la cuota gratuita.
+         */
+        private boolean redactionEnabled = false;
+        /** "Análisis con IA" del periodo con Gemini (solo si {@code enabled}). Encendido por defecto. */
+        private boolean insightsEnabled = true;
+        /** Timeout de conexión y de lectura con Gemini, en ms. */
+        private int timeoutMs = 30000;
     }
 
     /** Valida y construye los umbrales; un valor fuera de (0, 1] impide arrancar. */
     public ForecastingThresholds thresholds() {
         return new ForecastingThresholds(criticalMarginRatio, moderateProjectedRatio, safeCandidateRatio);
+    }
+
+    /** Redacción con Gemini: interruptor general y el propio de la redacción. */
+    public boolean redactionUsesLlm() {
+        return llm.isEnabled() && llm.isRedactionEnabled();
+    }
+
+    /** Análisis del periodo con Gemini: interruptor general y el propio del análisis. */
+    public boolean insightsUseLlm() {
+        return llm.isEnabled() && llm.isInsightsEnabled();
     }
 
     public Duration defaultShift() {

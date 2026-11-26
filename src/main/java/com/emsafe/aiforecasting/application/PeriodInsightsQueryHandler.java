@@ -2,6 +2,7 @@ package com.emsafe.aiforecasting.application;
 
 import com.emsafe.aiforecasting.application.AnalyticsSummaryQueryHandler.Period;
 import com.emsafe.aiforecasting.domain.model.AnalyticsSummary;
+import com.emsafe.aiforecasting.domain.model.LlmQuotaExceededException;
 import com.emsafe.aiforecasting.domain.model.PeriodInsights;
 import com.emsafe.aiforecasting.domain.model.WorkerNames;
 import com.emsafe.aiforecasting.domain.ports.PeriodInsightsPort;
@@ -32,7 +33,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>Es consultivo y de solo lectura: no cambia criticidades, evaluaciones ni eventos.</li>
  *   <li>Caché en memoria por (organización, periodo resuelto, zona) durante {@code ttl} (10 min), para
  *       no repetir llamadas al LLM; {@code refresh=true} la ignora y la renueva. Se guarda también el
- *       fallback (si el LLM está caído, evita esperar el timeout en cada clic).</li>
+ *       fallback (si el LLM está caído, evita esperar el timeout en cada clic). Con la cuota del LLM
+ *       agotada (429), el fallback se guarda solo {@code quotaTtl} (1 min) para volver a probar pronto.</li>
  *   <li>Los textos nombran a los operarios con su nombre de IAM ({@link WorkerNamePort}); sin nombre,
  *       o si IAM falla, "operario #id". Los nombres no se envían al LLM.</li>
  *   <li>Si el puerto lanzara una excepción, se usa {@link InsightsFallbackPolicy}.</li>
@@ -41,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PeriodInsightsQueryHandler {
 
     public static final Duration DEFAULT_TTL = Duration.ofMinutes(10);
+    public static final Duration QUOTA_EXCEEDED_TTL = Duration.ofMinutes(1);
     static final int MAX_CACHE_ENTRIES = 500;
     private static final Logger log = LoggerFactory.getLogger(PeriodInsightsQueryHandler.class);
 
@@ -50,17 +53,19 @@ public class PeriodInsightsQueryHandler {
     private final InsightsFallbackPolicy fallback;
     private final Clock clock;
     private final Duration ttl;
+    private final Duration quotaTtl;
     private final Map<Key, Entry> cache = new ConcurrentHashMap<>();
 
     public PeriodInsightsQueryHandler(AnalyticsSummaryQueryHandler summaries, PeriodInsightsPort insights,
                                       WorkerNamePort workerNames, InsightsFallbackPolicy fallback, Clock clock,
-                                      Duration ttl) {
+                                      Duration ttl, Duration quotaTtl) {
         this.summaries = summaries;
         this.insights = insights;
         this.workerNames = workerNames;
         this.fallback = fallback;
         this.clock = clock;
         this.ttl = ttl;
+        this.quotaTtl = quotaTtl;
     }
 
     private record Key(Long organizationId, LocalDate from, LocalDate to, ZoneId zone) {
@@ -85,13 +90,19 @@ public class PeriodInsightsQueryHandler {
                 period.zone().getId());
         WorkerNames names = names(organizationId, summary);
         PeriodInsights result;
+        Duration entryTtl = ttl;
         try {
             result = insights.analyze(summary, names);
+        } catch (LlmQuotaExceededException e) {
+            log.warn("Cuota de Gemini agotada (modelo {}); análisis con reglas para la organización {}, en caché {} s",
+                    e.getModel(), organizationId, quotaTtl.toSeconds());
+            result = fallback.analyze(summary, names, clock.instant());
+            entryTtl = quotaTtl;
         } catch (RuntimeException e) {
             log.warn("Period insights failed for organization {}; using fallback: {}", organizationId, e.toString());
             result = fallback.analyze(summary, names, clock.instant());
         }
-        store(key, result, clock.instant());
+        store(key, result, clock.instant(), entryTtl);
         return result;
     }
 
@@ -115,11 +126,11 @@ public class PeriodInsightsQueryHandler {
         }
     }
 
-    private void store(Key key, PeriodInsights result, Instant now) {
+    private void store(Key key, PeriodInsights result, Instant now, Duration entryTtl) {
         cache.values().removeIf(e -> !now.isBefore(e.expiresAt()));
         if (cache.size() >= MAX_CACHE_ENTRIES) {
             cache.clear();
         }
-        cache.put(key, new Entry(result, now.plus(ttl)));
+        cache.put(key, new Entry(result, now.plus(entryTtl)));
     }
 }

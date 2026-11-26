@@ -112,8 +112,14 @@ public class PreventiveAssessmentWorkflow {
         return snapshots.findByOrganizationIdAndZoneId(snapshot.organizationId(), snapshot.zoneId());
     }
 
-    /** La evaluación nunca falla por el LLM: ante error o respuesta vacía se usa la plantilla. */
+    /**
+     * La evaluación nunca falla por el LLM: ante error o respuesta vacía se usa la plantilla. Dentro de
+     * {@link TemplateOnlyRedaction} (historial de la semilla de demo) no se llama al LLM.
+     */
     private NaturalLanguageRedaction redact(PreventiveAssessment assessment, Instant now) {
+        if (TemplateOnlyRedaction.isActive()) {
+            return fallback.redact(assessment, now);
+        }
         try {
             NaturalLanguageRedaction redaction = naturalLanguage.redact(assessment);
             if (redaction != null) {

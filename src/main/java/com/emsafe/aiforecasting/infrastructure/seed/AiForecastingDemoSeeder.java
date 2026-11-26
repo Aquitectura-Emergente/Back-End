@@ -1,6 +1,7 @@
 package com.emsafe.aiforecasting.infrastructure.seed;
 
 import com.emsafe.aiforecasting.application.CloseEndedSessionAssessmentsHandler;
+import com.emsafe.aiforecasting.application.TemplateOnlyRedaction;
 import com.emsafe.aiforecasting.infrastructure.AiForecastingConfiguration;
 import com.emsafe.aiforecasting.infrastructure.seed.DemoExposurePlan.PlannedSession;
 import com.emsafe.aiforecasting.infrastructure.seed.DemoExposurePlan.Worker;
@@ -374,7 +375,8 @@ public class AiForecastingDemoSeeder {
                     + "(emsafe.personal-dosimetry.outbox-relay-enabled=false); historical alerts were not settled");
             return 0;
         }
-        drain(relay);
+        // Evaluaciones del historial: plantilla, sin llamar al LLM (arranque rápido y sin gastar cuota).
+        TemplateOnlyRedaction.run(() -> drain(relay));
         int settled = 0;
         for (Participant p : participants) {
             for (AlertDto alert : alarms.forWorker(p.email())) {

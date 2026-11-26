@@ -20,10 +20,27 @@ class NaturalLanguagePortWiringTest {
     private static final String MISSING_KEY_WARNING = "llm.enabled=true but gemini.api-key is empty";
 
     private NaturalLanguagePort wire(boolean enabled, String apiKey) {
+        return wire(enabled, true, apiKey);
+    }
+
+    private NaturalLanguagePort wire(boolean enabled, boolean redactionEnabled, String apiKey) {
         ForecastingProperties properties = new ForecastingProperties();
         properties.getLlm().setEnabled(enabled);
+        properties.getLlm().setRedactionEnabled(redactionEnabled);
         return new AiForecastingConfiguration().naturalLanguagePort(properties, new FallbackMessagePolicy(),
-                Clock.systemUTC(), apiKey, "gemini-2.5-flash");
+                Clock.systemUTC(), apiKey, "gemini-3.5-flash-lite");
+    }
+
+    @Test
+    void redactionIsOffByDefaultEvenWithLlmAndKey(CapturedOutput output) {
+        ForecastingProperties properties = new ForecastingProperties();
+        properties.getLlm().setEnabled(true);
+
+        assertThat(new AiForecastingConfiguration().naturalLanguagePort(properties, new FallbackMessagePolicy(),
+                Clock.systemUTC(), "test-key-not-real", "gemini-3.5-flash-lite"))
+                .isInstanceOf(FallbackOnlyRedactionAdapter.class);
+        assertThat(wire(true, false, "test-key-not-real")).isInstanceOf(FallbackOnlyRedactionAdapter.class);
+        assertThat(output).contains("llm.redaction-enabled=false").doesNotContain("test-key-not-real");
     }
 
     @Test

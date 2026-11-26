@@ -21,7 +21,19 @@ class PeriodInsightsPortWiringTest {
         ForecastingProperties properties = new ForecastingProperties();
         properties.getLlm().setEnabled(enabled);
         return new AiForecastingConfiguration().periodInsightsPort(properties, new InsightsFallbackPolicy(),
-                Clock.systemUTC(), apiKey, "gemini-2.5-flash");
+                Clock.systemUTC(), apiKey, "gemini-3.5-flash-lite");
+    }
+
+    @Test
+    void insightsAreOnByDefaultWithLlmAndKeyAndCanBeTurnedOff() {
+        assertThat(wire(true, "test-key-not-real")).isInstanceOf(GeminiInsightsAdapter.class);
+
+        ForecastingProperties off = new ForecastingProperties();
+        off.getLlm().setEnabled(true);
+        off.getLlm().setInsightsEnabled(false);
+        assertThat(new AiForecastingConfiguration().periodInsightsPort(off, new InsightsFallbackPolicy(),
+                Clock.systemUTC(), "test-key-not-real", "gemini-3.5-flash-lite"))
+                .isInstanceOf(FallbackOnlyInsightsAdapter.class);
     }
 
     @Test

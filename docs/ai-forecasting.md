@@ -171,8 +171,11 @@ El motivo (`reason`) de la recomendación contiene solo IDs.
 
 ### Redacción
 
-- **Con LLM.** Con `llm.enabled=true`, `GeminiRedactionAdapter` llama a Gemini, reutilizando
-  `gemini.api-key` y `gemini.model`, con un `RestTemplate` propio y timeout `llm.timeout-ms`.
+- **Con LLM.** Con `llm.enabled=true` **y** `llm.redaction-enabled=true` (apagado por defecto: es una
+  llamada por aviso), `GeminiRedactionAdapter` llama a Gemini, reutilizando
+  `gemini.api-key` y `gemini.model` (por defecto `gemini-3.5-flash-lite`), con un `RestTemplate` propio y
+  timeout `llm.timeout-ms` (por defecto 30000 ms). El razonamiento interno va al mínimo; ver
+  [Gemini](#gemini-y-variables-de-entorno).
   - El prompt va en español y solo incluye IDs, porcentajes, horas y el tipo de recomendación,
     nunca nombres ni datos personales.
   - La key viaja en la cabecera `x-goog-api-key`, no en la URL.
@@ -183,6 +186,9 @@ El motivo (`reason`) de la recomendación contiene solo IDs.
   plantilla (`FallbackOnlyRedactionAdapter`). Ver [Gemini](#gemini-y-variables-de-entorno).
 - **La evaluación nunca falla por el LLM.** El campo `redaction.generatedBy` indica el origen:
   `LLM` o `FALLBACK`.
+- **Historial de la semilla de demo.** Las evaluaciones que deja la semilla para jornadas pasadas se
+  redactan siempre con la plantilla, sin llamar al LLM (`TemplateOnlyRedaction`). Ver
+  [Semilla de demo](#semilla-de-demo).
 
 ## API
 
@@ -386,7 +392,8 @@ servicio externo con coste; no crea nada.
 2. Si no hay caché, obtiene el `AnalyticsSummary` de `AnalyticsSummaryQueryHandler`, sin recalcular
    nada. La llamada al LLM queda fuera de la transacción de lectura.
 3. El puerto de dominio `PeriodInsightsPort` produce el análisis:
-   - `GeminiInsightsAdapter`, con `llm.enabled=true` y la key definida;
+   - `GeminiInsightsAdapter`, con `llm.enabled=true`, `llm.insights-enabled=true` (valor por
+     defecto) y la key definida;
    - `FallbackOnlyInsightsAdapter` en los demás casos.
 
    Es el mismo patrón que la [redacción](#redacción). Los dos adaptadores están en
@@ -461,7 +468,7 @@ reglas automáticas. También nombra a los operarios. El análisis nunca falla p
 
 Respuesta real en modo `FALLBACK` con la [semilla de demo](#semilla-de-demo) (Quantum,
 `from` = hoy − 21 días). Se muestran los primeros 3 hallazgos y 3 de las 7 recomendaciones.
-Con Gemini, la forma es la misma, con `generatedBy = LLM`, `model = gemini-2.5-flash` y el disclaimer
+Con Gemini, la forma es la misma, con `generatedBy = LLM`, `model = gemini-3.5-flash-lite` y el disclaimer
 de IA.
 
 ```json
@@ -601,8 +608,11 @@ rango impide arrancar la aplicación.
 | `emsafe.ai-forecasting.near-limit-ratio` | `0.90` | Analítica: jornada "cerca del límite" si índice final ≥ ratio × límite |
 | `emsafe.ai-forecasting.model-id` | `LINEAR_RATE` | Se guarda en cada evaluación |
 | `emsafe.ai-forecasting.model-version` | `1` | Código resultante: `LINEAR_RATE_V1` |
-| `emsafe.ai-forecasting.llm.enabled` | `false` | `false` = solo plantilla, sin red (siempre en tests) |
-| `emsafe.ai-forecasting.llm.timeout-ms` | `5000` | Timeout de conexión y de lectura con Gemini |
+| `emsafe.ai-forecasting.llm.enabled` | `false` | Interruptor general. `false` = solo plantilla y reglas, sin red (siempre en tests) |
+| `emsafe.ai-forecasting.llm.redaction-enabled` | `false` | Redacción de cada evaluación con Gemini (solo si `llm.enabled`). Variable `EMSAFE_AIFORECASTING_LLM_REDACTIONENABLED` |
+| `emsafe.ai-forecasting.llm.insights-enabled` | `true` | [Análisis con IA](#análisis-con-ia) del periodo con Gemini (solo si `llm.enabled`). Variable `EMSAFE_AIFORECASTING_LLM_INSIGHTSENABLED` |
+| `emsafe.ai-forecasting.llm.timeout-ms` | `30000` | Timeout de conexión y de lectura con Gemini (variable `EMSAFE_AIFORECASTING_LLM_TIMEOUTMS`) |
+| `gemini.model` | `gemini-3.5-flash-lite` | Modelo de Gemini (variable `GEMINI_MODEL`). Compartido con el chat Astra de Client Portal |
 | `emsafe.ai-forecasting.seed-demo` | `false` | [Semilla de demo](#semilla-de-demo) de Quantum. Nunca en producción |
 | `emsafe.ai-forecasting.outbox-relay-enabled` | `true` | Relay de `af_outbox` (`false` en el perfil de test) |
 | `emsafe.ai-forecasting.outbox-relay-delay-ms` | `30000` | Pausa entre pasadas del relay |
@@ -786,7 +796,7 @@ $env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-17.0.21.9-hotspot'   # o
 | --- | --- |
 | Dominio (sin Spring) | `ExposureProjectionServiceTest`, `RotationCandidateSelectorTest`, `CriticalityAssessmentServiceTest`, `RotationRecommendationServiceTest`, `PreventiveAssessmentTest`, `FallbackMessagePolicyTest`, `WorkerExposureSnapshotTest`, `AssessmentPriorityTest`, `ValueObjectsTest`, `ExposureAnalyticsCalculatorTest`, `InsightsFallbackPolicyTest` (incluye nombres en los textos) y `DomainPurityTest` (falla si el dominio importa Spring, JPA o Lombok) |
 | Aplicación, con fakes en memoria | `TriggerAssessmentHandlerTest`, `UpsertExposureSnapshotHandlerTest`, `ShiftUpdatedHandlerTest`, `QueryHandlersTest`, `OutboxHandlersTest`, `ForecastingAccessPolicyTest` (incluye SSO), `AnalyticsSummaryQueryHandlerTest`, `OpenSessionAssessmentsTest` (vigentes y cierre con `SESSION_ENDED`), `PeriodInsightsQueryHandlerTest` (caché, `refresh`, periodo inválido, solo lectura) |
-| Infraestructura | `AiForecastingPersistenceTest` (`@DataJpaTest` sobre H2), `GeminiRedactionAdapterTest` (`MockRestServiceServer`: éxito, timeout, vacío, error), `NaturalLanguagePortWiringTest` (qué adaptador según `llm.enabled` y la key), `GeminiInsightsAdapterTest` (JSON válido con seudónimos reemplazados por nombres; JSON inválido, timeout y error caen al fallback; prompt sin IDs ni nombres), `PeriodInsightsPortWiringTest`, `IamWorkerNameAdapterTest`, `ForecastingOutboxRelayTest`, `IamForecastingActorDirectoryTest`, `AnalyticsAdaptersTest`, `ShiftUpdatedEventListenerTest`, `ForecastingPropertiesTest`, `DemoExposurePlanTest`, `AiForecastingDemoSeederTest` (semilla de punta a punta con el relay de Personal Dosimetry, alertas, escalamiento y el análisis con IA en modo fallback) |
+| Infraestructura | `AiForecastingPersistenceTest` (`@DataJpaTest` sobre H2), `GeminiRedactionAdapterTest` (`MockRestServiceServer`: éxito, timeout, vacío, error), `GeminiClientTest` (`thinkingConfig` por modelo, reintento sin él y 429), `NaturalLanguagePortWiringTest` (qué adaptador según `llm.enabled` y la key), `GeminiInsightsAdapterTest` (JSON válido con seudónimos reemplazados por nombres; JSON inválido, timeout y error caen al fallback; prompt sin IDs ni nombres), `PeriodInsightsPortWiringTest`, `IamWorkerNameAdapterTest`, `ForecastingOutboxRelayTest`, `IamForecastingActorDirectoryTest`, `AnalyticsAdaptersTest`, `ShiftUpdatedEventListenerTest`, `ForecastingPropertiesTest`, `DemoExposurePlanTest`, `AiForecastingDemoSeederTest` (semilla de punta a punta con el relay de Personal Dosimetry, alertas, escalamiento y el análisis con IA en modo fallback) |
 | REST | `AiForecastingControllerTest` (contrato web y Swagger), `AiForecastingApiIntegrationTest` (JWT real por login: acceso por rol incluido SSO y WORKER, flujo, contrato de Occupational Health, ack, duplicados y 400/404/409/422) y `AiForecastingAnalyticsApiTest` (analítica y análisis con IA con JWT real: acceso, 400, fallback, caché y `refresh`) e `InsightsResourcesTest` (disclaimer por origen) |
 
 Fuera del paquete, `ExposureQueryFacadeTest` y `ExposureSessionRepositoryEndedBetweenTest` (Personal
@@ -809,6 +819,13 @@ otros contextos**: todo pasa por sus servicios públicos, con las mismas reglas 
 | Device Management | `DeviceCatalog`, `DeviceService.create` | Un `PERSONAL_DOSIMETER` por operario (`AF-DEMO-DOS-01..04`) |
 | Personal Dosimetry | `PersonalDosimetryService` (actor ADMIN), `ExposureQueryFacade` | Membresías OPERATOR de los operarios y **SSO de `sso@quantumdyn.com`**, límite 12000 uT·s con advertencia 0.8, **60 jornadas cerradas** (15 días hábiles de las últimas 3 semanas × 4 operarios, 08:00–16:00 de Lima) y **una abierta hoy** por operario, iniciada hace 4 h |
 | Alerts | `AlarmService.forWorker`, `acknowledgeAs`, `resolve` | Acusa y resuelve las alertas de las jornadas del historial |
+
+**Sin LLM para el historial.** La semilla entrega los avisos de las jornadas pasadas drenando el relay
+en el hilo de arranque, dentro de `TemplateOnlyRedaction`. Esas evaluaciones se redactan con la
+plantilla aunque `llm.enabled=true`, así que el arranque no espera a Gemini ni gasta cuota. Las
+evaluaciones de las jornadas abiertas hoy las entrega después el relay programado, fuera de ese
+ámbito, y usan Gemini si está activo. Lo prueba
+`AiForecastingDemoSeederTest.theSeedNeverAsksTheLlmToRedactHistoricalAssessments`.
 
 **Membresía SSO.** Con ella, el SSO de Quantum (`sso@quantumdyn.com` / `sso12345`) puede usar desde
 el portal la pantalla `/sso/exposure` (`GET /api/sso/workers`, `GET .../workers/{id}/sessions`,
@@ -854,15 +871,63 @@ Health no hay candidatos de rotación y las recomendaciones de la demo son `RESC
 estuvo en `application-dev.properties` sigue en el historial de git y debe regenerarse. La misma
 propiedad la usa el chat de Client Portal.
 
-| `llm.enabled` | `GEMINI_API_KEY` | Resultado |
-| --- | --- | --- |
-| `false` (por defecto) | da igual | Plantilla (`FallbackOnlyRedactionAdapter`). Log: `LLM disabled, using template redaction` |
-| `true` | vacía | Arranca, avisa **una vez** (`llm.enabled=true but gemini.api-key is empty`) y usa la plantilla |
-| `true` | definida | `GeminiRedactionAdapter`. Ante error, timeout o respuesta vacía, plantilla y aviso por evaluación |
+**Modelo.** `gemini.model=${GEMINI_MODEL:gemini-3.5-flash-lite}` en `application.properties` y en los
+perfiles `dev`, `demo` y `prod`. Es rápido, no usa razonamiento interno y tiene más cuota gratuita.
+`gemini-2.5-flash` ya no está disponible para claves nuevas, y `gemini-3.8-flash` agotó en pruebas su
+cuota gratuita de 20 llamadas por día. El chat Astra de Client Portal lee la misma propiedad, así que
+también usa `gemini-3.5-flash-lite`, salvo que se defina `GEMINI_MODEL`.
 
-El [Análisis con IA](#análisis-con-ia) sigue la misma tabla: con el LLM apagado o sin key usa
-`FallbackOnlyInsightsAdapter` (log: `period insights use deterministic rules`); con la key, usa
-`GeminiInsightsAdapter` (log: `Gemini period insights enabled`).
+**Qué usa el LLM.** `llm.enabled` es el interruptor general, y cada uso tiene el suyo:
+
+| Uso | Propiedad | Por defecto | Llamadas |
+| --- | --- | --- | --- |
+| Redacción de cada evaluación | `llm.redaction-enabled` | `false` | Una por aviso de advertencia: agota pronto la cuota |
+| Análisis con IA del periodo | `llm.insights-enabled` | `true` | Una por clic del SSO, con caché de 10 min |
+
+Con los valores por defecto y `llm.enabled=true`, la cuota se gasta solo en el análisis.
+
+**Cuota del free tier.** La cuota gratuita de Gemini es **por proyecto de Google Cloud y por
+modelo**, no por clave: varias claves del mismo proyecto la comparten, y otro modelo tiene su propio
+cupo. Al agotarse, Gemini responde `429 RESOURCE_EXHAUSTED`. Entonces:
+
+- `GeminiClient` registra `Cuota de Gemini agotada (HTTP 429) para el modelo …`, sin la clave ni el
+  cuerpo de la respuesta, y no reintenta.
+- La redacción usa la plantilla.
+- El análisis del periodo usa las reglas (`generatedBy = FALLBACK`) y guarda ese resultado en caché
+  solo **1 minuto**, en lugar de 10, para volver a probar pronto. El handler registra
+  `Cuota de Gemini agotada (modelo …); análisis con reglas …`.
+
+Para seguir, se espera al reinicio diario de la cuota o se cambia de modelo con `GEMINI_MODEL`.
+
+**Timeout.** `llm.timeout-ms` vale 30000 ms por defecto (antes 5000). Con 5 s, los modelos con
+razonamiento interno fallaban con `Read timed out`. El timeout aplica a la conexión y a la lectura.
+Una evaluación en vivo puede esperar hasta ese tiempo antes de caer a la plantilla.
+
+**Razonamiento al mínimo (`thinkingConfig`).** `GeminiClient` lo envía en `generationConfig` en
+cada llamada, tanto de la redacción como del análisis:
+
+| Modelo | Se envía primero | Si el modelo lo rechaza |
+| --- | --- | --- |
+| `gemini-2.*` | `{"thinkingBudget": 0}` | Sin `thinkingConfig` |
+| Otros (p. ej. `gemini-3.5-flash-lite`) | `{"thinkingLevel": "minimal"}` | `{"thinkingLevel": "low"}` y, si también lo rechaza, sin `thinkingConfig` |
+
+Se considera rechazo un 400 cuyo cuerpo menciona "thinking". El reintento es inmediato y la opción
+rechazada se recuerda para las llamadas siguientes. Un timeout, una key inválida u otro error no se
+reintentan.
+
+Redacción:
+
+| `llm.enabled` | `llm.redaction-enabled` | `GEMINI_API_KEY` | Resultado |
+| --- | --- | --- | --- |
+| `false` (por defecto) | da igual | da igual | Plantilla (`FallbackOnlyRedactionAdapter`). Log: `LLM disabled, using template redaction` |
+| `true` | `false` (por defecto) | da igual | Plantilla. Log: `LLM redaction disabled (llm.redaction-enabled=false)` |
+| `true` | `true` | vacía | Arranca, avisa **una vez** (`llm.enabled=true but gemini.api-key is empty`) y usa la plantilla |
+| `true` | `true` | definida | `GeminiRedactionAdapter`. Ante error, timeout, 429 o respuesta vacía, plantilla y aviso por evaluación |
+
+[Análisis con IA](#análisis-con-ia): con `llm.enabled=false`, `llm.insights-enabled=false` o sin key usa
+`FallbackOnlyInsightsAdapter` (log: `period insights use deterministic rules`). Con `llm.enabled=true`
+y la key, como `insights-enabled` vale `true` por defecto, usa `GeminiInsightsAdapter` (log:
+`Gemini period insights enabled`).
 
 Prueba local con Gemini, solo para esa terminal de PowerShell:
 
@@ -871,21 +936,28 @@ $env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-17.0.21.9-hotspot'
 $s = Read-Host 'GEMINI_API_KEY' -AsSecureString      # no queda en el historial
 $env:GEMINI_API_KEY = [System.Net.NetworkCredential]::new('', $s).Password
 $env:EMSAFE_AIFORECASTING_LLM_ENABLED = 'true'
+# opcionales: $env:GEMINI_MODEL = 'gemini-3.5-flash-lite'; $env:EMSAFE_AIFORECASTING_LLM_TIMEOUTMS = '30000'
+# redacción por evaluación (gasta una llamada por aviso): $env:EMSAFE_AIFORECASTING_LLM_REDACTIONENABLED = 'true'
 .\mvnw.cmd spring-boot:run
 # al terminar
 Remove-Item Env:GEMINI_API_KEY, Env:EMSAFE_AIFORECASTING_LLM_ENABLED
 ```
 
-Debe aparecer `AI Forecasting: Gemini redaction enabled` y, tras un aviso, la evaluación debe traer
-`redaction.generatedBy = LLM`.
+Debe aparecer `AI Forecasting: Gemini period insights enabled`, y
+`POST …/analytics/organizations/{id}/insights` debe responder `generatedBy = LLM`. Con
+`EMSAFE_AIFORECASTING_LLM_REDACTIONENABLED=true` aparece además `Gemini redaction enabled`, y tras un
+aviso la evaluación trae `redaction.generatedBy = LLM`.
 
 ### Variables del despliegue (Azure, perfil `prod`)
 
 | Variable | ¿Obligatoria? | Propósito |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | No | Clave de Gemini para la redacción (y el chat de Client Portal). Vacía: plantilla |
-| `EMSAFE_AIFORECASTING_LLM_ENABLED` | No (`false`) | `true` para redactar con Gemini |
-| `EMSAFE_AIFORECASTING_LLM_TIMEOUTMS` | No (`5000`) | Timeout con Gemini, en ms |
+| `EMSAFE_AIFORECASTING_LLM_ENABLED` | No (`false`) | Interruptor general del LLM en AI Forecasting |
+| `EMSAFE_AIFORECASTING_LLM_INSIGHTSENABLED` | No (`true`) | Análisis con IA del periodo con Gemini (si el interruptor general está en `true`) |
+| `EMSAFE_AIFORECASTING_LLM_REDACTIONENABLED` | No (`false`) | Redacción de cada evaluación con Gemini (una llamada por aviso) |
+| `GEMINI_MODEL` | No (`gemini-3.5-flash-lite`) | Modelo de Gemini para la redacción, el análisis con IA y el chat Astra. La cuota gratuita es por proyecto y por modelo |
+| `EMSAFE_AIFORECASTING_LLM_TIMEOUTMS` | No (`30000`) | Timeout de conexión y de lectura con Gemini, en ms |
 | `EMSAFE_AIFORECASTING_SEEDDEMO` | **No debe existir** (o `false`) | Semilla de demo |
 | `EMSAFE_AIFORECASTING_OUTBOXRELAYENABLED` | No (`true`) | Relay que entrega `RotationSuggested` a Occupational Health |
 | `JWT_SECRET` | **Sí** (plataforma) | Validación de tokens; sin ella `prod` no arranca |

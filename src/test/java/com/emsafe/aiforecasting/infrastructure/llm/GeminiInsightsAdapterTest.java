@@ -256,6 +256,15 @@ class GeminiInsightsAdapterTest {
     }
 
     @Test
+    void quotaExceededIsPropagatedSoTheCallerCachesTheFallbackBriefly() {
+        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> adapter.analyze(rich(), NAMES))
+                .isInstanceOf(com.emsafe.aiforecasting.domain.model.LlmQuotaExceededException.class)
+                .hasMessageNotContaining("test-key");
+    }
+
+    @Test
     void serverErrorFallsBack() {
         server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
 
