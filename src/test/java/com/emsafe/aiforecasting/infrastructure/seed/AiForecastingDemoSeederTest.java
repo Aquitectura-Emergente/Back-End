@@ -30,6 +30,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
@@ -90,6 +91,8 @@ class AiForecastingDemoSeederTest {
     @Autowired private CriticalWorkersQueryHandler criticalWorkers;
     @Autowired private AssessmentRepository assessments;
     @Autowired private CloseEndedSessionAssessmentsHandler endedHandler;
+    /** Espía del puerto de redacción (aquí, la plantilla): registra a quién se le pidió redactar. */
+    @SpyBean private com.emsafe.aiforecasting.domain.ports.NaturalLanguagePort naturalLanguage;
     /** Se construye a mano: el bean está apagado en el perfil de test (session-end-reconcile-enabled=false). */
     private SessionEndReconciliationJob reconciliation;
 
@@ -198,6 +201,31 @@ class AiForecastingDemoSeederTest {
                 Map.entry(workers.get(0), CriticalityLevel.HIGH));
         assertThat(s.projectedCriticalWorkers()).extracting(AnalyticsSummary.ProjectedCritical::workerId)
                 .containsExactly(workers.get(1), workers.get(0));
+    }
+
+    /**
+     * Las evaluaciones del historial se redactan con la plantilla sin pasar por el puerto del LLM; solo
+     * las de las jornadas abiertas hoy (las entrega el relay después de la semilla) llegan al puerto.
+     */
+    @Test
+    void theSeedNeverAsksTheLlmToRedactHistoricalAssessments() {
+        drainRelay();
+        Set<String> history = demoHistory().stream().map(ClosedSession::sessionId).collect(Collectors.toSet());
+        assertThat(history).hasSize(60);
+
+        List<String> redacted = org.mockito.Mockito.mockingDetails(naturalLanguage).getInvocations().stream()
+                .filter(i -> i.getMethod().getName().equals("redact"))
+                .map(i -> ((PreventiveAssessment) i.getArgument(0)).getSessionId())
+                .toList();
+
+        assertThat(redacted).isNotEmpty().noneMatch(history::contains);
+        // y las evaluaciones del historial sí tienen redacción (de plantilla)
+        List<PreventiveAssessment> historical = assessments.search(
+                new AssessmentSearchCriteria(org(), null, null, null, null), 0, 200).content().stream()
+                .filter(a -> history.contains(a.getSessionId())).toList();
+        assertThat(historical).isNotEmpty().allSatisfy(a -> assertThat(a.getRedaction())
+                .hasValueSatisfying(r -> assertThat(r.generatedBy())
+                        .isEqualTo(com.emsafe.aiforecasting.domain.model.RedactionSource.FALLBACK)));
     }
 
     /** "Análisis con IA" sin LLM (perfil de test): el fallback cubre toda la estructura y cuadra con el resumen. */

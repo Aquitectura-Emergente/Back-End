@@ -24,7 +24,7 @@ class ForecastingPropertiesTest {
         assertThat(p.getModelId()).isEqualTo("LINEAR_RATE");
         assertThat(p.getModelVersion()).isEqualTo("1");
         assertThat(p.getLlm().isEnabled()).isFalse();
-        assertThat(p.getLlm().getTimeoutMs()).isEqualTo(5000);
+        assertThat(p.getLlm().getTimeoutMs()).isEqualTo(30000);
         assertThat(p.isSeedDemo()).isFalse();
         assertThat(p.thresholds().criticalMarginRatio()).isEqualByComparingTo("0.10");
     }

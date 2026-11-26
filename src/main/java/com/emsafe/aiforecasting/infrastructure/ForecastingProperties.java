@@ -35,7 +35,8 @@ public class ForecastingProperties {
     public static class Llm {
         /** Si es false no se llama a Gemini y se usa siempre la plantilla. */
         private boolean enabled = false;
-        private int timeoutMs = 5000;
+        /** Timeout de conexión y de lectura con Gemini, en ms. */
+        private int timeoutMs = 30000;
     }
 
     /** Valida y construye los umbrales; un valor fuera de (0, 1] impide arrancar. */
