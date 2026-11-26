@@ -1,5 +1,6 @@
 package com.emsafe.aiforecasting.infrastructure.llm;
 
+import com.emsafe.aiforecasting.domain.model.LlmQuotaExceededException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
@@ -26,6 +27,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li>Si el modelo rechaza esa configuración (400 que menciona "thinking"), se reintenta enseguida
  *       con la siguiente opción y, al final, sin {@code thinkingConfig}. La opción rechazada se recuerda
  *       para las llamadas siguientes. Un timeout o cualquier otro error no se reintenta.</li>
+ *   <li><b>Cuota agotada</b> (HTTP 429): se registra "Cuota de Gemini agotada" (sin la clave ni el cuerpo
+ *       de la respuesta) y se lanza {@link LlmQuotaExceededException}. No se reintenta.</li>
  * </ul>
  *
  * Devuelve el texto de la primera candidata (sus partes que no son de razonamiento, concatenadas) o
@@ -88,6 +91,10 @@ final class GeminiClient {
             Thinking t = currentThinking();
             try {
                 return post(systemInstruction, prompt, generationConfig, t);
+            } catch (HttpClientErrorException.TooManyRequests e) {
+                log.warn("Cuota de Gemini agotada (HTTP 429) para el modelo {}: se usa el fallback. "
+                        + "La cuota gratuita es por proyecto y por modelo.", model);
+                throw new LlmQuotaExceededException(model);
             } catch (HttpClientErrorException.BadRequest e) {
                 if (t == Thinking.NONE || !rejectsThinking(e)) {
                     throw e;

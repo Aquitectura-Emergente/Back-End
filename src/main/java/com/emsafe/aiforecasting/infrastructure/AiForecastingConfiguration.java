@@ -60,7 +60,7 @@ public class AiForecastingConfiguration {
 
     public static final String CLOCK = "aiForecastingClock";
     /** Modelo por defecto si {@code gemini.model} (GEMINI_MODEL) no está definido. */
-    public static final String DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+    public static final String DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
     private static final Logger log = LoggerFactory.getLogger(AiForecastingConfiguration.class);
 
     /**
@@ -131,6 +131,10 @@ public class AiForecastingConfiguration {
             log.info("AI Forecasting: LLM disabled, using template redaction");
             return new FallbackOnlyRedactionAdapter(fallback, clock);
         }
+        if (!properties.redactionUsesLlm()) {
+            log.info("AI Forecasting: LLM redaction disabled (llm.redaction-enabled=false), using template redaction");
+            return new FallbackOnlyRedactionAdapter(fallback, clock);
+        }
         // La clave se lee una sola vez al arrancar: sin ella, Gemini nunca se podría llamar. Se avisa
         // aquí una vez (y no en cada evaluación) y se usa la plantilla directamente.
         if (apiKey == null || apiKey.isBlank()) {
@@ -145,14 +149,17 @@ public class AiForecastingConfiguration {
                 apiKey, model, fallback, clock);
     }
 
-    /** Mismo criterio que {@link #naturalLanguagePort}: LLM apagado o sin clave, reglas deterministas. */
+    /**
+     * Mismo criterio que {@link #naturalLanguagePort}, con su propio interruptor
+     * ({@code llm.insights-enabled}): LLM apagado, análisis apagado o sin clave, reglas deterministas.
+     */
     @Bean
     PeriodInsightsPort periodInsightsPort(ForecastingProperties properties, InsightsFallbackPolicy fallback,
                                           @Qualifier(CLOCK) Clock clock,
                                           @Value("${gemini.api-key:}") String apiKey,
                                           @Value("${gemini.model:" + DEFAULT_GEMINI_MODEL + "}") String model) {
-        if (!properties.getLlm().isEnabled() || apiKey == null || apiKey.isBlank()) {
-            log.info("AI Forecasting: period insights use deterministic rules (LLM disabled or no key)");
+        if (!properties.insightsUseLlm() || apiKey == null || apiKey.isBlank()) {
+            log.info("AI Forecasting: period insights use deterministic rules (LLM or insights disabled, or no key)");
             return new FallbackOnlyInsightsAdapter(fallback, clock);
         }
         log.info("AI Forecasting: Gemini period insights enabled (model {}, timeout {} ms)",
@@ -245,7 +252,7 @@ public class AiForecastingConfiguration {
                                                           InsightsFallbackPolicy fallback,
                                                           @Qualifier(CLOCK) Clock clock) {
         return new PeriodInsightsQueryHandler(summaries, insights, workerNames, fallback, clock,
-                PeriodInsightsQueryHandler.DEFAULT_TTL);
+                PeriodInsightsQueryHandler.DEFAULT_TTL, PeriodInsightsQueryHandler.QUOTA_EXCEEDED_TTL);
     }
 
     @Bean

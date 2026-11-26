@@ -2,6 +2,7 @@ package com.emsafe.aiforecasting.infrastructure.llm;
 
 import com.emsafe.aiforecasting.domain.model.AnalyticsSummary;
 import com.emsafe.aiforecasting.domain.model.ForecastingRuleException;
+import com.emsafe.aiforecasting.domain.model.LlmQuotaExceededException;
 import com.emsafe.aiforecasting.domain.model.PeriodInsights;
 import com.emsafe.aiforecasting.domain.model.PeriodInsights.Finding;
 import com.emsafe.aiforecasting.domain.model.PeriodInsights.FindingLevel;
@@ -32,7 +33,8 @@ import java.util.Set;
  * ({@link GeminiInsightsPromptBuilder}) y, al volver, valida la estructura y las longitudes y
  * reemplaza los seudónimos: en los textos, por el nombre del operario ({@link WorkerNames}, que
  * nunca entra en el prompt); en {@code operariosAfectados}, por el {@code workerId}. Ante key ausente, error HTTP, timeout, respuesta vacía
- * o inválida devuelve el análisis de {@link InsightsFallbackPolicy}: nunca falla por el LLM.
+ * o inválida devuelve el análisis de {@link InsightsFallbackPolicy}. La única excepción que deja pasar
+ * es {@link LlmQuotaExceededException} (429), para que quien llama guarde el fallback poco tiempo.
  */
 public class GeminiInsightsAdapter implements PeriodInsightsPort {
 
@@ -66,6 +68,8 @@ public class GeminiInsightsAdapter implements PeriodInsightsPort {
                             "responseMimeType", "application/json",
                             "responseSchema", GeminiInsightsPromptBuilder.RESPONSE_SCHEMA));
             return parse(text, summary, names, people);
+        } catch (LlmQuotaExceededException e) {
+            throw e;
         } catch (InvalidInsightsResponseException | ForecastingRuleException e) {
             log.warn("Gemini period insights were invalid; using fallback: {}", e.getMessage());
         } catch (RuntimeException e) {

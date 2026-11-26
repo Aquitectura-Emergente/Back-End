@@ -117,6 +117,13 @@ class GeminiRedactionAdapterTest {
     }
 
     @Test
+    void quotaExceededFallsBack() {
+        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+
+        assertThat(adapter.redact(highWithRotation()).generatedBy()).isEqualTo(RedactionSource.FALLBACK);
+    }
+
+    @Test
     void serverErrorFallsBack() {
         server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
 

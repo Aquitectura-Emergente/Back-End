@@ -1,8 +1,12 @@
 package com.emsafe.aiforecasting.infrastructure.llm;
 
 import com.emsafe.aiforecasting.infrastructure.llm.GeminiClient.Thinking;
+import com.emsafe.aiforecasting.domain.model.LlmQuotaExceededException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.ExpectedCount;
@@ -21,7 +25,8 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-/** thinkingConfig al mínimo y reintento sin él si el modelo no lo acepta. */
+/** thinkingConfig al mínimo y reintento sin él si el modelo no lo acepta; cuota agotada (429). */
+@ExtendWith(OutputCaptureExtension.class)
 class GeminiClientTest {
 
     private static final String OK = "{\"candidates\":[{\"content\":{\"parts\":["
@@ -117,6 +122,24 @@ class GeminiClientTest {
         assertThatThrownBy(() -> c.generate("sys", "prompt", CONFIG)).isInstanceOf(HttpClientErrorException.class);
         assertThat(c.currentThinking()).isEqualTo(Thinking.LEVEL_MINIMAL);
         server.verify();
+    }
+
+    @Test
+    void quotaExceededLogsClearlyWithoutTheKeyAndIsNotRetried(CapturedOutput output) {
+        GeminiClient c = new GeminiClient(restTemplate, "secret-key-not-real-123", "gemini-3.5-flash-lite");
+        server.expect(ExpectedCount.once(), requestTo(url("gemini-3.5-flash-lite")))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS).contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\","
+                                + "\"message\":\"You exceeded your current quota (thinking)\"}}"));
+
+        assertThatThrownBy(() -> c.generate("sys", "prompt", CONFIG))
+                .isInstanceOf(LlmQuotaExceededException.class)
+                .hasMessageContaining("gemini-3.5-flash-lite")
+                .hasMessageNotContaining("secret-key");
+        server.verify();
+        assertThat(c.currentThinking()).isEqualTo(Thinking.LEVEL_MINIMAL);
+        assertThat(output).contains("Cuota de Gemini agotada").contains("gemini-3.5-flash-lite")
+                .doesNotContain("secret-key-not-real-123").doesNotContain("RESOURCE_EXHAUSTED");
     }
 
     @Test

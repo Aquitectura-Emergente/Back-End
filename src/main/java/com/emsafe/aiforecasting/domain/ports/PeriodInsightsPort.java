@@ -12,6 +12,9 @@ import com.emsafe.aiforecasting.domain.model.WorkerNames;
  *
  * <p>{@code names} solo sirve para escribir los textos finales (nombre del operario o
  * "operario #id"); nunca se envía al LLM.</p>
+ *
+ * <p>Con la cuota del LLM agotada lanza {@code LlmQuotaExceededException}: quien llama usa el fallback y
+ * lo guarda en caché poco tiempo.</p>
  */
 public interface PeriodInsightsPort {
 
