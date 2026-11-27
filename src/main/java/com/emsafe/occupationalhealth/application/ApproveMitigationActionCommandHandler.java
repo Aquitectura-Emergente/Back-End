@@ -97,8 +97,12 @@ public class ApproveMitigationActionCommandHandler {
         LocalDateTime effectiveAt = LocalDateTime.now();
         action.approve(Decision.approvedBy(ssoUserId, reason));
 
-        for (AffectedWorker worker : action.getAffectedWorkers()) {
-            applyTo(worker, action, effectiveAt);
+        // Una reprogramación no mueve al operario: no hay turno que reasignar, solo
+        // se aprueba y se le avisa. Rotación y reubicación sí cambian su puesto.
+        if (action.getType().movesWorker()) {
+            for (AffectedWorker worker : action.getAffectedWorkers()) {
+                applyTo(worker, action, effectiveAt);
+            }
         }
 
         action.markApplied("Applied at " + effectiveAt);
