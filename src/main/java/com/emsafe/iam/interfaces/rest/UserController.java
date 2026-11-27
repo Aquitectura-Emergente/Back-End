@@ -38,8 +38,9 @@ public class UserController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<UserDto>> create(@Valid @RequestBody CreateUserRequest req) {
-        UserDto created = userService.create(req);
+    public ResponseEntity<ApiResponse<UserDto>> create(@Valid @RequestBody CreateUserRequest req,
+                                                       Authentication auth) {
+        UserDto created = userService.create(req, userService.idOf(auth == null ? null : auth.getName()));
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok("User created", created));
     }
 
@@ -49,7 +50,7 @@ public class UserController {
             @RequestBody UpdateUserRequest req,
             Authentication auth) {
         assertSelfOrAdmin(auth, id);
-        return ResponseEntity.ok(ApiResponse.ok(userService.update(id, req)));
+        return ResponseEntity.ok(ApiResponse.ok(userService.update(id, req, userService.idOf(auth.getName()))));
     }
 
     @DeleteMapping("/{id}")

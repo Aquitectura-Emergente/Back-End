@@ -93,6 +93,8 @@ abstract class DosimetryRestartRecoveryContract {
                 public User userByEmail(String email) { return userById(900001L); }
                 public User userById(Long id) { return new User(id, true, id.equals(900001L), true, id.equals(900001L), false, false); }
                 public Device deviceById(Long id) { return new Device(id, 900001L, true); }
+                public java.util.List<IndustrialAccount> industrialAccounts() { return java.util.List.of(); }
+                public java.util.Optional<Long> anyAdministratorId() { return java.util.Optional.of(900001L); }
             };
         }
     }

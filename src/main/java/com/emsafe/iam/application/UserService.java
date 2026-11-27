@@ -11,7 +11,9 @@ import com.emsafe.iam.domain.model.Initials;
 import com.emsafe.iam.domain.model.Role;
 import com.emsafe.iam.domain.model.UserStatus;
 import com.emsafe.iam.infrastructure.persistence.UserRepository;
+import com.emsafe.iam.application.events.IndustrialAccountSaved;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +28,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ApplicationEventPublisher events;
 
     public List<UserDto> findAll(String role) {
         List<AppUser> users;
@@ -50,6 +53,12 @@ public class UserService {
 
     @Transactional
     public UserDto create(CreateUserRequest req) {
+        return create(req, null);
+    }
+
+    /** {@code savedBy}: id de quien crea la cuenta (admin o SSO); null si es el sistema. */
+    @Transactional
+    public UserDto create(CreateUserRequest req, Long savedBy) {
         if (userRepository.existsByEmail(req.email())) {
             throw new BadRequestException("Email already in use: " + req.email());
         }
@@ -76,7 +85,47 @@ public class UserService {
                 .organizationId(organizationId)
                 .build();
 
-        return UserDto.from(userRepository.save(user));
+        AppUser saved = userRepository.save(user);
+        announce(saved, savedBy);
+        return UserDto.from(saved);
+    }
+
+    /**
+     * Convierte en operario de {@code organizationId} una cuenta CLIENT individual
+     * que se usó como operario antes de existir el rol WORKER (la demo de
+     * dosimetría). Si ya es operario de esa organización, no hace nada.
+     */
+    @Transactional
+    public UserDto makeWorker(Long userId, Long organizationId) {
+        AppUser user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        if (user.hasRole(Role.WORKER) && organizationId.equals(user.getOrganizationId())) {
+            return UserDto.from(user);
+        }
+        if (!user.hasRole(Role.CLIENT) || user.getOrganizationId() != null
+                || userRepository.existsByOrganizationId(userId)) {
+            throw new BadRequestException("Only an individual client account can become a worker");
+        }
+        AppUser org = userRepository.findById(organizationId)
+                .filter(u -> u.hasRole(Role.CLIENT))
+                .orElseThrow(() -> new BadRequestException("Invalid organization: " + organizationId));
+        user.setRole(Role.WORKER);
+        user.setOrganizationId(org.getId());
+        AppUser saved = userRepository.save(user);
+        announce(saved, null);
+        return UserDto.from(saved);
+    }
+
+    /** Id de una cuenta por su email (quién hace el cambio); null si no existe. */
+    public Long idOf(String email) {
+        return email == null ? null : userRepository.findByEmail(email).map(AppUser::getId).orElse(null);
+    }
+
+    /** Avisa a los contextos que dan acceso por organización (p. ej. memberships de dosimetría). */
+    private void announce(AppUser user, Long savedBy) {
+        if (user.getRole() == null || !user.getRole().isIndustrial() || user.getOrganizationId() == null) return;
+        events.publishEvent(new IndustrialAccountSaved(user.getId(), user.getRole(), user.getOrganizationId(),
+                user.isActive(), savedBy));
     }
 
     /**
@@ -103,6 +152,11 @@ public class UserService {
 
     @Transactional
     public UserDto update(Long id, UpdateUserRequest req) {
+        return update(id, req, null);
+    }
+
+    @Transactional
+    public UserDto update(Long id, UpdateUserRequest req, Long savedBy) {
         AppUser user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", id));
 
@@ -137,7 +191,9 @@ public class UserService {
             user.setPasswordHash(passwordEncoder.encode(req.password()));
         }
 
-        return UserDto.from(userRepository.save(user));
+        AppUser saved = userRepository.save(user);
+        announce(saved, savedBy);
+        return UserDto.from(saved);
     }
 
     @Transactional

@@ -9,6 +9,11 @@ import com.emsafe.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Stream;
+
 @Component
 @RequiredArgsConstructor
 public class ExistingPlatformDirectory implements DosimetryDirectory {
@@ -27,6 +32,18 @@ public class ExistingPlatformDirectory implements DosimetryDirectory {
     public Device deviceById(Long id) {
         var d = devices.findWithClient(id).orElseThrow(() -> new ResourceNotFoundException("Device", id));
         return new Device(d.getId(), d.getClient() == null ? null : d.getClient().getId(), d.isActive());
+    }
+
+    public List<IndustrialAccount> industrialAccounts() {
+        return Stream.concat(users.findByRole(Role.WORKER).stream(), users.findByRole(Role.SSO_RESPONSIBLE).stream())
+                .filter(u -> u.getOrganizationId() != null)
+                .map(u -> new IndustrialAccount(u.getId(), u.getOrganizationId(), u.hasRole(Role.WORKER), u.isActive()))
+                .toList();
+    }
+
+    public Optional<Long> anyAdministratorId() {
+        return users.findByRole(Role.ADMIN).stream().filter(AppUser::isActive)
+                .map(AppUser::getId).min(Comparator.naturalOrder());
     }
 
     private User snapshot(AppUser user) {
