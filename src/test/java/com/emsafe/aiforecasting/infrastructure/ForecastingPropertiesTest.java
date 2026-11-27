@@ -24,7 +24,12 @@ class ForecastingPropertiesTest {
         assertThat(p.getModelId()).isEqualTo("LINEAR_RATE");
         assertThat(p.getModelVersion()).isEqualTo("1");
         assertThat(p.getLlm().isEnabled()).isFalse();
-        assertThat(p.getLlm().getTimeoutMs()).isEqualTo(5000);
+        assertThat(p.getLlm().getTimeoutMs()).isEqualTo(30000);
+        assertThat(p.getLlm().isRedactionEnabled()).isFalse();
+        assertThat(p.getLlm().isInsightsEnabled()).isTrue();
+        // con llm.enabled=false, ninguno de los dos usa el LLM
+        assertThat(p.redactionUsesLlm()).isFalse();
+        assertThat(p.insightsUseLlm()).isFalse();
         assertThat(p.isSeedDemo()).isFalse();
         assertThat(p.thresholds().criticalMarginRatio()).isEqualByComparingTo("0.10");
     }
@@ -38,6 +43,8 @@ class ForecastingPropertiesTest {
                 "emsafe.ai-forecasting.model-version", "2",
                 "emsafe.ai-forecasting.llm.enabled", "true",
                 "emsafe.ai-forecasting.llm.timeout-ms", "1500",
+                "emsafe.ai-forecasting.llm.redaction-enabled", "true",
+                "emsafe.ai-forecasting.llm.insights-enabled", "false",
                 "emsafe.ai-forecasting.seed-demo", "true");
 
         ForecastingProperties p = new Binder(new MapConfigurationPropertySource(source))
@@ -47,6 +54,8 @@ class ForecastingPropertiesTest {
         assertThat(p.getCriticalMarginRatio()).isEqualByComparingTo("0.2");
         assertThat(p.getLlm().isEnabled()).isTrue();
         assertThat(p.getLlm().getTimeoutMs()).isEqualTo(1500);
+        assertThat(p.redactionUsesLlm()).isTrue();
+        assertThat(p.insightsUseLlm()).isFalse();
         assertThat(p.isSeedDemo()).isTrue();
         assertThat(new PropertiesModelVersionProvider(p).current()).isEqualTo(new ModelVersion("LINEAR_RATE", "2"));
     }
@@ -58,6 +67,21 @@ class ForecastingPropertiesTest {
 
         assertThatThrownBy(p::thresholds)
                 .isInstanceOf(com.emsafe.aiforecasting.domain.model.ForecastingRuleException.class);
+    }
+
+    @Test
+    void nearLimitRatioDefaultsTo090BindsAndFailsFastOutOfRange() {
+        assertThat(new ForecastingProperties().getNearLimitRatio()).isEqualByComparingTo("0.90");
+
+        ForecastingProperties bound = new Binder(new MapConfigurationPropertySource(
+                Map.of("emsafe.ai-forecasting.near-limit-ratio", "0.85")))
+                .bind("emsafe.ai-forecasting", ForecastingProperties.class).get();
+        assertThat(bound.getNearLimitRatio()).isEqualByComparingTo("0.85");
+
+        ForecastingProperties invalid = new ForecastingProperties();
+        invalid.setNearLimitRatio(new java.math.BigDecimal("1.2"));
+        assertThatThrownBy(() -> new AiForecastingConfiguration().exposureAnalyticsCalculator(invalid))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

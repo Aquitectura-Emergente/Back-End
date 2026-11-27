@@ -11,9 +11,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class AssessmentQueryHandler {
 
     private final AssessmentRepository assessments;
+    private final OpenSessionAssessments openSessions;
 
-    public AssessmentQueryHandler(AssessmentRepository assessments) {
+    public AssessmentQueryHandler(AssessmentRepository assessments, OpenSessionAssessments openSessions) {
         this.assessments = assessments;
+        this.openSessions = openSessions;
     }
 
     @Transactional(readOnly = true)
@@ -22,9 +24,10 @@ public class AssessmentQueryHandler {
                 .orElseThrow(() -> new ResourceNotFoundException("Assessment not found: " + id));
     }
 
+    /** La evaluación vigente del operario: de una jornada que no terminó, la más reciente. */
     @Transactional(readOnly = true)
     public PreventiveAssessment activeForWorker(Long workerId) {
-        return assessments.findActiveByWorkerId(workerId)
+        return openSessions.currentForWorker(workerId)
                 .orElseThrow(() -> new ResourceNotFoundException("No active assessment for worker " + workerId));
     }
 

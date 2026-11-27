@@ -19,6 +19,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Drena {@code af_outbox} y entrega los hechos a quien los consume.
@@ -41,10 +42,24 @@ import java.util.Map;
  * {@code InboxDeduplicator} de Occupational Health reconozca el reintento y no
  * abra dos propuestas. Es entrega al-menos-una-vez con consumidor idempotente.</p>
  *
- * <p>Los hechos sin consumidor hoy —{@code PredictiveRiskDetected}— también se
- * marcan, o encabezarían la cola para siempre e impedirían ver los siguientes.
- * Marcar no borra: solo escribe {@code published_at}, y el evento sigue entero
- * en la tabla y consultable por el outbox REST.</p>
+ * <h2>Qué significa {@code published_at} aquí</h2>
+ *
+ * <p>{@code published_at} quiere decir <b>despachado por el relay</b>, no
+ * «entregado a un consumidor». Hay dos casos:</p>
+ * <ul>
+ *   <li>{@code RotationSuggested}: se publica en proceso hacia Occupational Health y
+ *       se marca solo si la entrega no falla.</li>
+ *   <li>{@link #INTERNAL_EVENT_TYPES} ({@code PredictiveRiskDetected}): es un hecho
+ *       <b>interno, sin consumidor por diseño</b>. Lo accionable de la misma
+ *       evaluación ya viaja en {@code RotationSuggested} (siempre se emite junto con
+ *       él), y avisar al operario lo hace Occupational Health con el
+ *       {@code ExposureWarningRaised} de Personal Dosimetry. Se marca sin publicarlo
+ *       para que no encabece la cola para siempre; marcar no borra, el evento sigue
+ *       entero en {@code af_outbox} como registro de dominio.</li>
+ * </ul>
+ * <p>Un tipo que no está en ninguno de los dos casos <b>no</b> se marca: queda
+ * pendiente y se avisa en el log, para que un evento nuevo no se dé por despachado
+ * en silencio.</p>
  */
 @Component
 @ConditionalOnProperty(name = "emsafe.ai-forecasting.outbox-relay-enabled",
@@ -53,6 +68,9 @@ public class ForecastingOutboxRelay {
 
     private static final Logger log = LoggerFactory.getLogger(ForecastingOutboxRelay.class);
     private static final int BATCH = 50;
+
+    /** Hechos internos: se registran en af_outbox pero no se publican a ningún contexto. */
+    public static final Set<String> INTERNAL_EVENT_TYPES = Set.of(ForecastingEventFactory.PREDICTIVE_RISK_DETECTED);
 
     private final ForecastingOutboxPort outbox;
     private final ApplicationEventPublisher events;
@@ -97,12 +115,16 @@ public class ForecastingOutboxRelay {
         return acknowledged;
     }
 
-    /** @return true si se puede marcar como publicado */
+    /** @return true si se puede marcar como despachado */
     private boolean deliver(OutboxEvent event) {
-        if (!ForecastingEventFactory.ROTATION_SUGGESTED.equals(event.eventType())) {
-            log.debug("Outbox event {} of type {} has no consumer yet; marking it published",
+        if (INTERNAL_EVENT_TYPES.contains(event.eventType())) {
+            log.debug("Outbox event {} of type {} is internal (no consumer by design); marking it dispatched",
                     event.eventId(), event.eventType());
             return true;
+        }
+        if (!ForecastingEventFactory.ROTATION_SUGGESTED.equals(event.eventType())) {
+            log.warn("Outbox event {} has unknown type {}; leaving it pending", event.eventId(), event.eventType());
+            return false;
         }
         try {
             events.publishEvent(toOccupationalHealthEvent(event));

@@ -38,4 +38,33 @@ public interface ExposureSessionRepository extends JpaRepository<ExposureSession
                                                   org.springframework.data.domain.Pageable page);
     Page<ExposureSession> findByOrganizationIdAndWorkerIdOrderByStartedAtDesc(
             Long organizationId, Long workerId, Pageable pageable);
+
+    /**
+     * Jornadas de la organización en un estado dado cuyo {@code endedAt} cae en
+     * {@code [from, to)}, de la que terminó antes a la última (la usa
+     * ExposureQueryFacade.closedSessions).
+     */
+    @Query("""
+            select s from ExposureSession s
+            where s.organizationId = :organizationId and s.state = :state
+              and s.endedAt >= :from and s.endedAt < :to
+            order by s.endedAt asc, s.id asc
+            """)
+    java.util.List<ExposureSession> findEndedBetween(@Param("organizationId") Long organizationId,
+                                                     @Param("state") ExposureSession.State state,
+                                                     @Param("from") Instant from, @Param("to") Instant to);
+
+    /**
+     * Identificadores de jornadas en reconciliación ({@code CLOSING}) cuyo
+     * {@code reconciliationDeadline} ya venció ({@code <= now}), de la más antigua
+     * a la última (la usa DosimetryReconciliationJob).
+     */
+    @Query("""
+            select s.id from ExposureSession s
+            where s.state = :state and s.reconciliationDeadline <= :now
+            order by s.reconciliationDeadline asc, s.id asc
+            """)
+    java.util.List<String> findExpiredReconciliationIds(@Param("state") ExposureSession.State state,
+                                                        @Param("now") Instant now,
+                                                        Pageable pageable);
 }

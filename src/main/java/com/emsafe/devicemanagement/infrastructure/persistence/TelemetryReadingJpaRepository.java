@@ -19,4 +19,10 @@ public interface TelemetryReadingJpaRepository extends JpaRepository<TelemetryRe
     List<TelemetryReading> findByDeviceSerialAndRoutingOrderByCapturedAtDescIdDesc(String deviceSerial,
                                                                                  ReadingRouting routing,
                                                                                  Pageable pageable);
+
+    Optional<TelemetryReading> findFirstByDeviceSerialAndCapturedAtLessThanOrderByCapturedAtDescIdDesc(
+            String deviceSerial, Instant before);
+
+    Optional<TelemetryReading> findFirstByDeviceSerialAndRoutingAndCapturedAtLessThanOrderByCapturedAtDescIdDesc(
+            String deviceSerial, ReadingRouting routing, Instant before);
 }

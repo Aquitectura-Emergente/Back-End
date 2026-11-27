@@ -22,6 +22,10 @@ public class DosimetryMembership {
     private Long grantedBy;
     @Column(nullable = false)
     private Instant grantedAt;
+    /** Puesto que se sugiere al iniciar la jornada del operario. */
+    private Long defaultJobPositionId;
+    /** Dosímetro que se sugiere al iniciar la jornada del operario. */
+    private Long defaultDeviceId;
 
     public DosimetryMembership(Long userId, Long organizationId, MembershipRole role,
                                Long grantedBy, Instant grantedAt) {
@@ -33,5 +37,16 @@ public class DosimetryMembership {
         this.role = role;
         this.grantedBy = grantedBy;
         this.grantedAt = grantedAt;
+    }
+
+    /** Valores habituales del operario; null los quita. Solo tiene sentido para un OPERATOR. */
+    public void setDefaults(Long jobPositionId, Long deviceId) {
+        if (role != MembershipRole.OPERATOR) {
+            throw DosimetryRuleException.invalid("Only an operator has default shift values");
+        }
+        if (jobPositionId != null) ExposureIndex.positiveId(jobPositionId, "jobPositionId");
+        if (deviceId != null) ExposureIndex.positiveId(deviceId, "deviceId");
+        this.defaultJobPositionId = jobPositionId;
+        this.defaultDeviceId = deviceId;
     }
 }

@@ -164,13 +164,17 @@ public class DeviceManagementDemoSeeder {
     private void seedSession(Long zoneId) {
         Device dosimeter = devices.findBySerial(DOSIMETER).orElseThrow();
         Instant now = clock.instant();
+        Long organizationId = dosimeter.organizationId();
+        // El operario de la demo es un WORKER de la empresa del dosímetro, para que su
+        // responsable de SSO lo vea y gestione sus jornadas. Las bases creadas antes lo
+        // tenían como CLIENT: se convierte aunque la jornada ya exista.
+        AppUser operator = accounts.findByEmail(OPERATOR_EMAIL)
+                .orElseGet(() -> createWorker(OPERATOR_EMAIL, "Operario demo", organizationId));
+        if (!operator.hasRole(Role.WORKER)) users.makeWorker(operator.getId(), organizationId);
         if (dosimetry.sessionCoveringDevice(dosimeter.getId(), now).isPresent()) return;
         AppUser admin = accounts.findByEmail(ADMIN_EMAIL).orElse(null);
         if (admin == null) return;
-        Long organizationId = dosimeter.organizationId();
         DosimetryActor actor = new DosimetryActor(admin.getId(), true, null, null);
-        AppUser operator = accounts.findByEmail(OPERATOR_EMAIL)
-                .orElseGet(() -> createClient(OPERATOR_EMAIL, "Operario demo"));
         dosimetry.grantMembership(actor, new GrantMembership(operator.getId(), organizationId, MembershipRole.OPERATOR));
         Long positionId = positions.listFor(organizationId, zoneId).stream()
                 .filter(p -> POSITION.equals(p.name())).findFirst().map(p -> p.id())
@@ -202,6 +206,12 @@ public class DeviceManagementDemoSeeder {
         if (edges.findByEdgeNodeId(edgeNodeId).isEmpty()) {
             edges.save(EdgeNode.register(edgeNodeId, organization.getId(), segment, clock.instant()));
         }
+    }
+
+    private AppUser createWorker(String email, String name, Long organizationId) {
+        users.create(new CreateUserRequest(name, null, email, "demo1234", Role.WORKER, null, "Lima", null, null,
+                null, "Operario de la demo de Device Management", organizationId));
+        return accounts.findByEmail(email).orElseThrow();
     }
 
     private AppUser createClient(String email, String name) {

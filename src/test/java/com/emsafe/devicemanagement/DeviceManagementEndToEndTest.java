@@ -117,6 +117,10 @@ class DeviceManagementEndToEndTest {
         assertThat(plantEdges.listFor(company.getId())).extracting(PlantEdgeDto::serialNumber).contains(PLANT_EDGE);
         assertThat(sessions.findSessionIdsCovering(dosimeter.getId(), Instant.now(),
                 org.springframework.data.domain.PageRequest.of(0, 5))).hasSize(1);
+        // el operario de la demo es un WORKER de la empresa, visible para su responsable de SSO
+        AppUser operator = users.findByEmail(DeviceManagementDemoSeeder.OPERATOR_EMAIL).orElseThrow();
+        assertThat(operator.getRole()).isEqualTo(com.emsafe.iam.domain.model.Role.WORKER);
+        assertThat(operator.getOrganizationId()).isEqualTo(company.getId());
 
         long deviceCount = devices.findAll().size();
         long edgeCount = edges.findAll().size();

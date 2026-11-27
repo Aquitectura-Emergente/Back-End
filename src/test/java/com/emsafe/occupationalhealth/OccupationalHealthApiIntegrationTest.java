@@ -571,7 +571,7 @@ class OccupationalHealthApiIntegrationTest {
                 Map.entry("workerId", workerId),
                 Map.entry("accumulatedIndex", new BigDecimal("600")),
                 Map.entry("limitIndex", new BigDecimal("800")),
-                Map.entry("limitVersionId", "L1"),
+                Map.entry("limitVersionId", 1L),
                 Map.entry("coveragePercentage", new BigDecimal("98.50")),
                 Map.entry("coverageComplete", coverageComplete),
                 Map.entry("finalizedBy", 1L),
@@ -606,7 +606,7 @@ class OccupationalHealthApiIntegrationTest {
                 "readingId", 1L,
                 "accumulatedIndex", new BigDecimal("900"),
                 "limitIndex", new BigDecimal("800"),
-                "limitVersionId", "L1",
+                "limitVersionId", 1L,
                 "capturedAt", now.minusSeconds(60),
                 "detectedAt", now,
                 "methodId", "MAGNETIC_TIME_INDEX_V1",
@@ -737,7 +737,7 @@ class OccupationalHealthApiIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"organizationId\":" + ORG + ",\"workerId\":" + workerId
                                 + ",\"sessionId\":\"s-it-1\",\"dose\":900,\"unit\":\"uT.h\","
-                                + "\"limit\":800,\"limitVersionId\":\"L1\"}"))
+                                + "\"limit\":800,\"limitVersionId\":1}"))
                 .andExpect(status().isAccepted());
 
         List<MitigationAction> open = actions.findOpenByWorker(ORG, workerId);

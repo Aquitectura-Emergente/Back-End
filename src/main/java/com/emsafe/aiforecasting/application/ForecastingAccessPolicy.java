@@ -11,10 +11,13 @@ import java.util.Objects;
  *
  * <ul>
  *   <li>Inbox y outbox: solo ADMIN.</li>
- *   <li>Consultas: ADMIN, o la organización dueña (cuenta CLIENT company) sobre sus propios datos.</li>
+ *   <li>Consultas: ADMIN (todas las organizaciones), o un actor que representa a una organización
+ *       (cuenta CLIENT company o SSO_RESPONSIBLE de esa organización) sobre sus propios datos.</li>
+ *   <li>WORKER, TECHNICIAN, CLIENT individual y SSO sin organización: 403.</li>
  * </ul>
- * Toda denegación es {@link AccessDeniedException} → 403 (también sin token, como el resto del
- * proyecto). Cuando se integre {@code feature/iam}, aquí se añade el rol SSO_RESPONSIBLE.
+ * La política no mira el rol: decide con {@link ForecastingActor#organizationId()}, que fija
+ * el directorio de actores. Toda denegación es {@link AccessDeniedException} → 403 (también sin
+ * token, como el resto del proyecto).
  */
 public class ForecastingAccessPolicy {
 

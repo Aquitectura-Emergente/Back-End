@@ -4,6 +4,7 @@ import com.emsafe.aiforecasting.application.commands.ExposureWarningRaisedComman
 import com.emsafe.aiforecasting.application.commands.UpsertExposureSnapshotCommand;
 import com.emsafe.occupationalhealth.application.events.EventEnvelope;
 import com.emsafe.occupationalhealth.application.events.inbound.ExposureSessionClosed;
+import com.emsafe.occupationalhealth.application.events.inbound.ExposureSessionOpened;
 import com.emsafe.occupationalhealth.application.events.inbound.ExposureWarningRaised;
 import com.emsafe.occupationalhealth.application.events.inbound.OccupationalLimitExceeded;
 import com.emsafe.personaldosimetry.domain.model.DosimetryEvent;
@@ -18,6 +19,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -114,12 +116,20 @@ public class DosimetryOutboxRelay {
     }
 
     @Scheduled(fixedDelayString = "${emsafe.personal-dosimetry.outbox-relay-delay-ms:30000}")
-    public void drainScheduled() {
+    public synchronized void drainScheduled() {
         try {
             drainOnce();
         } catch (RuntimeException e) {
             log.warn("Dosimetry outbox relay pass failed: {}", e.toString());
         }
+    }
+
+    /**
+     * Ejecuta una pasada sin solaparse con la programada, para que las dos no
+     * entreguen el mismo evento a la vez.
+     */
+    public synchronized void exclusively(Runnable pass) {
+        pass.run();
     }
 
     /**
@@ -148,11 +158,50 @@ public class DosimetryOutboxRelay {
         return delivered;
     }
 
+    /**
+     * Una pasada en la que cada evento se entrega y se confirma en su propia
+     * transacción. Así un evento que falla (y deja marcada su transacción para
+     * deshacerse) no arrastra a los demás de la pasada, como pasaba al envolver
+     * {@link #drainOnce()} entero en una sola transacción.
+     *
+     * @return eventos entregados
+     */
+    public int drainEachIsolated(TransactionTemplate tx) {
+        List<String> pending = tx.execute(status -> events
+                .findByPublishedAtIsNullAndEventTypeInOrderByOccurredAtAsc(DELIVERABLE, PageRequest.of(0, BATCH))
+                .getContent().stream().map(DosimetryEvent::getId).toList());
+        int delivered = 0;
+        for (String id : pending == null ? List.<String>of() : pending) {
+            try {
+                Boolean ok = tx.execute(status -> events.findById(id)
+                        .filter(event -> event.getPublishedAt() == null && deliver(event))
+                        .map(event -> {
+                            event.acknowledge(clock.instant());
+                            events.save(event);
+                            return true;
+                        })
+                        .orElse(false));
+                if (Boolean.TRUE.equals(ok)) delivered++;
+            } catch (RuntimeException e) {
+                // Su transacción quedó deshecha; la pasada programada lo reintentará.
+                log.warn("Could not deliver dosimetry event {}: {}", id, e.toString());
+            }
+        }
+        if (delivered > 0) {
+            log.info("Dosimetry relay delivered {} of {} pending event(s)", delivered, pending.size());
+        }
+        return delivered;
+    }
+
     private boolean deliver(DosimetryEvent event) {
         try {
             publisher.publishEvent(switch (event.getEventType()) {
                 case SESSION_CLOSED -> toSessionClosed(event);
-                case SESSION_OPENED -> toSnapshotUpsert(event);
+                case SESSION_OPENED -> {
+                    // Salud ocupacional abre el turno del operario (después del commit).
+                    publisher.publishEvent(toOccupationalHealthOpened(event));
+                    yield toSnapshotUpsert(event);
+                }
                 case WARNING_RAISED -> {
                     publisher.publishEvent(toOccupationalHealthWarning(event));
                     yield toWarningRaised(event);
@@ -231,6 +280,17 @@ public class DosimetryOutboxRelay {
                 event.getOrganizationId(), utc(event.getOccurredAt()), event.getId(), null);
     }
 
+    /** La jornada abierta, para que Occupational Health abra el turno en la zona del puesto. */
+    private ExposureSessionOpened toOccupationalHealthOpened(
+            DosimetryEvent event) {
+        Map<String, Object> payload = read(event);
+        return new ExposureSessionOpened(
+                envelopeOf(event, payload),
+                text(payload.get("sessionId")),
+                number(payload.get("workerId")),
+                number(payload.get("positionId")));
+    }
+
     private OccupationalLimitExceeded toLimitExceeded(DosimetryEvent event) {
         Map<String, Object> payload = read(event);
         return new OccupationalLimitExceeded(envelopeOf(event, payload),
@@ -241,7 +301,7 @@ public class DosimetryOutboxRelay {
                 decimal(payload.get("accumulatedIndex")),
                 text(payload.get("unit")),
                 decimal(payload.get("limitIndex")),
-                text(payload.get("limitVersionId")),
+                number(payload.get("limitVersionId")),
                 text(payload.get("methodId")),
                 dateTime(payload.get("capturedAt")),
                 dateTime(payload.get("detectedAt")));
@@ -283,9 +343,9 @@ public class DosimetryOutboxRelay {
      * sin divergencia de vocabulario: los once campos del comando se llaman igual
      * que los del payload.
      *
-     * <p>{@code limitVersionId} viaja como número y no como texto, al contrario
-     * que hacia Occupational Health: aquí el destino lo tipa {@code Long}, y es el
-     * tipo real del id del límite en este contexto.</p>
+     * <p>{@code limitVersionId} viaja unificado como {@code Long} tanto hacia AI
+     * Forecasting como hacia Occupational Health, coincidiendo con el tipo real
+     * del identificador del límite en este contexto.</p>
      */
     private ExposureWarningRaisedCommand toWarningRaised(DosimetryEvent event) {
         Map<String, Object> payload = read(event);
@@ -314,7 +374,7 @@ public class DosimetryOutboxRelay {
                 decimal(payload.get("accumulatedIndex")),
                 text(payload.get("unit")),
                 decimal(payload.get("limitIndex")),
-                text(payload.get("limitVersionId")),
+                number(payload.get("limitVersionId")),
                 text(payload.get("methodId")),
                 dateTime(payload.get("capturedAt")),
                 dateTime(payload.get("detectedAt")));
@@ -338,7 +398,17 @@ public class DosimetryOutboxRelay {
     }
 
     private static Long number(Object value) {
-        return value instanceof Number n ? n.longValue() : null;
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return Long.valueOf(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /**

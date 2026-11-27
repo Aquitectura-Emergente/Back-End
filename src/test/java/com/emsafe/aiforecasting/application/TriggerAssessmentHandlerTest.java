@@ -151,6 +151,38 @@ class TriggerAssessmentHandlerTest {
     }
 
     @Test
+    void insideTemplateOnlyRedactionTheLlmIsNotCalled() {
+        ctx.seedHighScenario();
+
+        TemplateOnlyRedaction.run(() -> ctx.trigger.handle(warningCmd("w-1", 101L, "7200")));
+
+        assertThat(ctx.llm.calls()).isZero();
+        assertThat(only().getRedaction()).hasValueSatisfying(r -> {
+            assertThat(r.generatedBy()).isEqualTo(RedactionSource.FALLBACK);
+            assertThat(r.text()).contains("101").contains("120.00 %");
+        });
+        assertThat(TemplateOnlyRedaction.isActive()).isFalse();
+
+        // fuera del ámbito, la siguiente evaluación vuelve a usar el LLM
+        ctx.trigger.handle(warningCmd("w-2", 101L, "7300"));
+        assertThat(ctx.llm.calls()).isEqualTo(1);
+    }
+
+    @Test
+    void templateOnlyScopeIsRestoredEvenIfTheWorkFails() {
+        assertThatThrownBy(() -> TemplateOnlyRedaction.run(() -> {
+            throw new IllegalStateException("boom");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(TemplateOnlyRedaction.isActive()).isFalse();
+
+        TemplateOnlyRedaction.run(() -> {
+            TemplateOnlyRedaction.run(() -> { });
+            assertThat(TemplateOnlyRedaction.isActive()).isTrue();
+        });
+        assertThat(TemplateOnlyRedaction.isActive()).isFalse();
+    }
+
+    @Test
     void llmFailureFallsBackAndAssessmentCompletes() {
         ctx.seedHighScenario();
         ctx.llm.fail();

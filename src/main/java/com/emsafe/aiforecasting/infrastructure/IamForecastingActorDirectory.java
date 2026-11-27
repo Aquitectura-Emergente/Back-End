@@ -11,9 +11,16 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Optional;
 
 /**
- * Directorio sobre el IAM de {@code develop} (solo lectura): ADMIN es administrador y una cuenta
- * CLIENT con clientType=company representa a la organización cuyo id es el del propio usuario.
- * Es el único punto a cambiar cuando se integre {@code feature/iam}.
+ * Directorio sobre IAM (solo lectura). Traduce una cuenta a la organización que representa:
+ * <ul>
+ *   <li>ADMIN: administrador, sin organización (ve todas).</li>
+ *   <li>CLIENT con clientType=company: la organización es el id del propio usuario.</li>
+ *   <li>SSO_RESPONSIBLE: la organización es {@code users.organization_id} (docs/iam.md §3).
+ *       Si está en null, no representa a ninguna y la política responde 403.</li>
+ *   <li>Cualquier otro rol (WORKER, TECHNICIAN, CLIENT individual): ninguna organización, así
+ *       que no accede a las consultas. El WORKER tiene organización en IAM, pero aquí no se
+ *       usa a propósito: las evaluaciones son de la organización, no del operario.</li>
+ * </ul>
  */
 @Component
 public class IamForecastingActorDirectory implements ForecastingActorDirectory {
@@ -32,9 +39,18 @@ public class IamForecastingActorDirectory implements ForecastingActorDirectory {
         return users.findByEmail(username).map(IamForecastingActorDirectory::toActor);
     }
 
-    private static ForecastingActor toActor(AppUser user) {
+    static ForecastingActor toActor(AppUser user) {
         boolean admin = user.hasRole(Role.ADMIN);
-        boolean company = user.hasRole(Role.CLIENT) && COMPANY.equalsIgnoreCase(user.getClientType());
-        return new ForecastingActor(user.getId(), admin, company ? user.getId() : null);
+        return new ForecastingActor(user.getId(), admin, organizationOf(user));
+    }
+
+    private static Long organizationOf(AppUser user) {
+        if (user.hasRole(Role.CLIENT) && COMPANY.equalsIgnoreCase(user.getClientType())) {
+            return user.getId();
+        }
+        if (user.hasRole(Role.SSO_RESPONSIBLE)) {
+            return user.getOrganizationId();
+        }
+        return null;
     }
 }

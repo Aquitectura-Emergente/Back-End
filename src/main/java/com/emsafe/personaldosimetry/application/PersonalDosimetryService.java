@@ -9,6 +9,7 @@ import com.emsafe.shared.exception.ResourceNotFoundException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ public class PersonalDosimetryService {
     private final DosimetryDirectory directory;
     private final ObjectMapper json;
     private final Clock clock;
+    private final ApplicationEventPublisher publisher;
 
     public DosimetryResources.Membership grantMembership(DosimetryActor actor, GrantMembership request) {
         actor.requireAdministrator();
@@ -198,6 +200,66 @@ public class PersonalDosimetryService {
         return sessions.findSessionIdsCovering(deviceId, at, PageRequest.of(0, 1)).stream().findFirst();
     }
 
+    /**
+     * Aplica un cambio de puesto ({@code ShiftUpdated} de Occupational Health) a la
+     * jornada abierta del operario: conserva {@code accumulatedIndex} y pasa a
+     * evaluar con el límite vigente del puesto nuevo.
+     *
+     * <p>Si {@code sessionId} viene informado, busca esa jornada; si es nulo o en
+     * blanco, usa la jornada abierta del operario en la organización. Si no existe
+     * la jornada en este contexto (por ejemplo, un turno de Occupational Health sin
+     * sesión de dosimetría vinculada), devuelve vacío sin fallar.</p>
+     */
+    public java.util.Optional<DosimetryResources.Session> applyShiftUpdate(
+            Long organizationId, String sessionId, Long workerId, Long newPositionId, Instant effectiveAt) {
+        ExposureIndex.positiveId(organizationId, "organizationId");
+        ExposureIndex.positiveId(workerId, "workerId");
+        ExposureIndex.positiveId(newPositionId, "newPositionId");
+
+        java.util.Optional<ExposureSession> found = (sessionId != null && !sessionId.isBlank())
+                ? sessions.findLocked(sessionId)
+                : sessions.findFirstByOrganizationIdAndWorkerIdAndStateOrderByStartedAtDesc(
+                                organizationId, workerId, ExposureSession.State.OPEN)
+                        .flatMap(s -> sessions.findLocked(s.getId()));
+        if (found.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        var session = found.get();
+        if (!session.getOrganizationId().equals(organizationId) || !session.getWorkerId().equals(workerId)) {
+            throw DosimetryRuleException.conflict("Shift update does not match session organization or worker");
+        }
+        if (session.getState() != ExposureSession.State.OPEN) {
+            throw DosimetryRuleException.conflict("Only open sessions accept shift updates");
+        }
+        Instant now = now();
+        Instant effective = (effectiveAt == null
+                || effectiveAt.isBefore(session.getStartedAt())
+                || effectiveAt.isAfter(now))
+                ? now
+                : effectiveAt.truncatedTo(ChronoUnit.MICROS);
+        var limit = limits
+                .findFirstByOrganizationIdAndJobPositionIdAndEffectiveFromLessThanEqualOrderByEffectiveFromDescVersionNumberDesc(
+                        organizationId, newPositionId, effective)
+                .orElseThrow(() -> DosimetryRuleException.invalid("No effective limit exists for the job position"));
+        var crossed = session.changePosition(limit, effective);
+        sessions.saveAndFlush(session);
+        if (crossed.warning() || crossed.exceeded()) {
+            var payload = new LinkedHashMap<String, Object>();
+            payload.put("sessionId", session.getId());
+            payload.put("workerId", session.getWorkerId());
+            payload.put("accumulatedIndex", session.getAccumulatedIndex());
+            payload.put("limitIndex", session.getLimitIndex());
+            payload.put("limitVersionId", session.getLimitVersionId());
+            payload.put("capturedAt", session.getLatestCaptureTo());
+            payload.put("detectedAt", now);
+            payload.put("methodId", ExposureIndex.METHOD);
+            payload.put("unit", ExposureIndex.UNIT);
+            if (crossed.warning()) emit(session.getOrganizationId(), "ExposureWarningRaised", payload, effective);
+            if (crossed.exceeded()) emit(session.getOrganizationId(), "OccupationalLimitExceeded", payload, effective);
+        }
+        return java.util.Optional.of(view(session));
+    }
+
     public DosimetryResources.Session requestClose(DosimetryActor actor, String id, CloseSession request) {
         var session = locked(id);
         actor.requireSupervisor(session.getOrganizationId());
@@ -219,26 +281,51 @@ public class PersonalDosimetryService {
         var session = locked(id);
         actor.requireSupervisor(session.getOrganizationId());
         if (session.getState() == ExposureSession.State.CLOSED) return view(session);
-        session.finalizeSession(now(), request != null && request.deliveryConfirmed());
+        Instant finalizedAt = now();
+        session.finalizeSession(finalizedAt, request != null && request.deliveryConfirmed());
         sessions.saveAndFlush(session);
-        // Map.ofEntries y no Map.of: son once pares y Map.of admite diez.
-        // unit, limitIndex, methodId y finalizedAt se añadieron el 2026-11-12
-        // porque el inbox de Occupational Health los exige para dejar constancia
-        // en un reporte de cumplimiento, y sin ellos ese hecho no se podía
-        // entregar. Son los mismos nombres que ya usa OccupationalLimitExceeded.
-        emit(session.getOrganizationId(), "ExposureSessionClosed",
-                Map.ofEntries(Map.entry("sessionId", id),
-                        Map.entry("workerId", session.getWorkerId()),
-                        Map.entry("accumulatedIndex", session.getAccumulatedIndex()),
-                        Map.entry("limitIndex", session.getLimitIndex()),
-                        Map.entry("limitVersionId", session.getLimitVersionId()),
-                        Map.entry("coveragePercentage", session.coverage(now())),
-                        Map.entry("coverageComplete", session.coverageComplete()),
-                        Map.entry("finalizedBy", actor.userId()),
-                        Map.entry("finalizedAt", now()),
-                        Map.entry("methodId", ExposureIndex.METHOD),
-                        Map.entry("unit", ExposureIndex.UNIT)), now());
+        emitSessionClosed(session, actor.userId(), finalizedAt);
         return view(session);
+    }
+
+    /**
+     * Finaliza con {@code deliveryConfirmed = false} una jornada {@code CLOSING}
+     * cuyo {@code reconciliationDeadline} ya venció. Idempotente: si ya pasó a
+     * {@code CLOSED} (por ejemplo, por una llamada manual concurrente) o todavía
+     * no venció el plazo, devuelve {@code false} sin emitir eventos duplicados.
+     */
+    public boolean finalizeExpiredClosingSession(String id) {
+        var found = sessions.findLocked(id);
+        if (found.isEmpty()) return false;
+        var session = found.get();
+        if (session.getState() != ExposureSession.State.CLOSING) return false;
+        Instant finalizedAt = now();
+        if (session.getReconciliationDeadline() == null
+                || finalizedAt.isBefore(session.getReconciliationDeadline())) {
+            return false;
+        }
+        session.finalizeSession(finalizedAt, false);
+        sessions.saveAndFlush(session);
+        emitSessionClosed(session, null, finalizedAt);
+        return true;
+    }
+
+    private void emitSessionClosed(ExposureSession session, Long finalizedBy, Instant finalizedAt) {
+        // LinkedHashMap y no Map.ofEntries: cuando finaliza la tarea programada
+        // (DosimetryReconciliationJob), finalizedBy es null y Map.entry lo rechazaría.
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("sessionId", session.getId());
+        payload.put("workerId", session.getWorkerId());
+        payload.put("accumulatedIndex", session.getAccumulatedIndex());
+        payload.put("limitIndex", session.getLimitIndex());
+        payload.put("limitVersionId", session.getLimitVersionId());
+        payload.put("coveragePercentage", session.coverage(finalizedAt));
+        payload.put("coverageComplete", session.coverageComplete());
+        payload.put("finalizedBy", finalizedBy);
+        payload.put("finalizedAt", finalizedAt);
+        payload.put("methodId", ExposureIndex.METHOD);
+        payload.put("unit", ExposureIndex.UNIT);
+        emit(session.getOrganizationId(), "ExposureSessionClosed", payload, finalizedAt);
     }
 
     @Transactional(readOnly = true)
@@ -254,6 +341,35 @@ public class PersonalDosimetryService {
                 .orElseThrow(() -> new ResourceNotFoundException("No exposure session exists for this account"));
         actor.requireRead(session.getOrganizationId(), session.getWorkerId());
         return view(session);
+    }
+
+    /** Puesto y dosímetro habituales del operario (los ve él, su SSO o un admin). */
+    @Transactional(readOnly = true)
+    public WorkerDefaults workerDefaults(DosimetryActor actor, Long workerId) {
+        var member = memberships.findById(workerId)
+                .orElseThrow(() -> new AccessDeniedException("Worker is outside the authorized scope"));
+        actor.requireRead(member.getOrganizationId(), workerId);
+        return new WorkerDefaults(member.getDefaultJobPositionId(), member.getDefaultDeviceId());
+    }
+
+    /**
+     * El SSO fija el puesto y el dosímetro habituales de un operario de su empresa.
+     * El dosímetro tiene que ser de la misma empresa; el puesto se comprueba al
+     * iniciar la jornada, que es cuando hace falta su límite vigente.
+     */
+    public WorkerDefaults changeWorkerDefaults(DosimetryActor actor, Long workerId, WorkerDefaults request) {
+        var member = memberships.findById(workerId)
+                .orElseThrow(() -> new AccessDeniedException("Worker is outside the authorized scope"));
+        actor.requireSupervisor(member.getOrganizationId());
+        if (request.deviceId() != null) {
+            var device = directory.deviceById(request.deviceId());
+            if (!member.getOrganizationId().equals(device.organizationId())) {
+                throw DosimetryRuleException.invalid("Dosimeter must belong to an active company");
+            }
+        }
+        member.setDefaults(request.jobPositionId(), request.deviceId());
+        memberships.save(member);
+        return new WorkerDefaults(member.getDefaultJobPositionId(), member.getDefaultDeviceId());
     }
 
     @Transactional(readOnly = true)
@@ -315,6 +431,7 @@ public class PersonalDosimetryService {
         payload.put("organizationId", organizationId);
         try {
             events.saveAndFlush(new DosimetryEvent(organizationId, type, json.writeValueAsString(payload), occurredAt));
+            publisher.publishEvent(new DosimetryEventRecorded(type));
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Could not serialize dosimetry event", ex);
         }

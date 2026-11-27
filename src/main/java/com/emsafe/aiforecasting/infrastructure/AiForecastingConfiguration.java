@@ -1,29 +1,42 @@
 package com.emsafe.aiforecasting.infrastructure;
 
 import com.emsafe.aiforecasting.application.AckOutboxEventHandler;
+import com.emsafe.aiforecasting.application.AnalyticsSummaryQueryHandler;
 import com.emsafe.aiforecasting.application.AssessmentQueryHandler;
+import com.emsafe.aiforecasting.application.CloseEndedSessionAssessmentsHandler;
+import com.emsafe.aiforecasting.application.OpenSessionAssessments;
 import com.emsafe.aiforecasting.application.CriticalWorkersQueryHandler;
 import com.emsafe.aiforecasting.application.ForecastingAccessPolicy;
 import com.emsafe.aiforecasting.application.ForecastingActorDirectory;
 import com.emsafe.aiforecasting.application.ForecastingEventFactory;
 import com.emsafe.aiforecasting.application.ModelVersionProvider;
 import com.emsafe.aiforecasting.application.OutboxQueryHandler;
+import com.emsafe.aiforecasting.application.PeriodInsightsQueryHandler;
 import com.emsafe.aiforecasting.application.PreventiveAssessmentWorkflow;
 import com.emsafe.aiforecasting.application.ShiftUpdatedHandler;
 import com.emsafe.aiforecasting.application.TriggerAssessmentHandler;
 import com.emsafe.aiforecasting.application.UpsertExposureSnapshotHandler;
 import com.emsafe.aiforecasting.domain.model.ForecastingThresholds;
 import com.emsafe.aiforecasting.domain.ports.AssessmentRepository;
+import com.emsafe.aiforecasting.domain.ports.ClosedSessionHistoryPort;
 import com.emsafe.aiforecasting.domain.ports.ForecastingOutboxPort;
 import com.emsafe.aiforecasting.domain.ports.NaturalLanguagePort;
+import com.emsafe.aiforecasting.domain.ports.OpenSessionPort;
+import com.emsafe.aiforecasting.domain.ports.PeriodInsightsPort;
+import com.emsafe.aiforecasting.domain.ports.PositionCatalogPort;
 import com.emsafe.aiforecasting.domain.ports.ProcessedMessagePort;
+import com.emsafe.aiforecasting.domain.ports.WorkerNamePort;
 import com.emsafe.aiforecasting.domain.ports.WorkerSnapshotRepository;
 import com.emsafe.aiforecasting.domain.services.CriticalityAssessmentService;
+import com.emsafe.aiforecasting.domain.services.ExposureAnalyticsCalculator;
 import com.emsafe.aiforecasting.domain.services.ExposureProjectionService;
 import com.emsafe.aiforecasting.domain.services.FallbackMessagePolicy;
+import com.emsafe.aiforecasting.domain.services.InsightsFallbackPolicy;
 import com.emsafe.aiforecasting.domain.services.RotationCandidateSelector;
 import com.emsafe.aiforecasting.domain.services.RotationRecommendationService;
+import com.emsafe.aiforecasting.infrastructure.llm.FallbackOnlyInsightsAdapter;
 import com.emsafe.aiforecasting.infrastructure.llm.FallbackOnlyRedactionAdapter;
+import com.emsafe.aiforecasting.infrastructure.llm.GeminiInsightsAdapter;
 import com.emsafe.aiforecasting.infrastructure.llm.GeminiRedactionAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +59,8 @@ import java.time.Duration;
 public class AiForecastingConfiguration {
 
     public static final String CLOCK = "aiForecastingClock";
+    /** Modelo por defecto si {@code gemini.model} (GEMINI_MODEL) no está definido. */
+    public static final String DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
     private static final Logger log = LoggerFactory.getLogger(AiForecastingConfiguration.class);
 
     /**
@@ -90,6 +105,16 @@ public class AiForecastingConfiguration {
         return new FallbackMessagePolicy();
     }
 
+    @Bean
+    InsightsFallbackPolicy insightsFallbackPolicy() {
+        return new InsightsFallbackPolicy();
+    }
+
+    @Bean
+    ExposureAnalyticsCalculator exposureAnalyticsCalculator(ForecastingProperties properties) {
+        return new ExposureAnalyticsCalculator(properties.getNearLimitRatio());
+    }
+
     // ─── Adaptadores ─────────────────────────────────────────────────────────
 
     @Bean
@@ -101,14 +126,45 @@ public class AiForecastingConfiguration {
     NaturalLanguagePort naturalLanguagePort(ForecastingProperties properties, FallbackMessagePolicy fallback,
                                             @Qualifier(CLOCK) Clock clock,
                                             @Value("${gemini.api-key:}") String apiKey,
-                                            @Value("${gemini.model:gemini-2.5-flash}") String model) {
+                                            @Value("${gemini.model:" + DEFAULT_GEMINI_MODEL + "}") String model) {
         if (!properties.getLlm().isEnabled()) {
             log.info("AI Forecasting: LLM disabled, using template redaction");
+            return new FallbackOnlyRedactionAdapter(fallback, clock);
+        }
+        if (!properties.redactionUsesLlm()) {
+            log.info("AI Forecasting: LLM redaction disabled (llm.redaction-enabled=false), using template redaction");
+            return new FallbackOnlyRedactionAdapter(fallback, clock);
+        }
+        // La clave se lee una sola vez al arrancar: sin ella, Gemini nunca se podría llamar. Se avisa
+        // aquí una vez (y no en cada evaluación) y se usa la plantilla directamente.
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("AI Forecasting: emsafe.ai-forecasting.llm.enabled=true but gemini.api-key is empty "
+                    + "(GEMINI_API_KEY); using template redaction");
             return new FallbackOnlyRedactionAdapter(fallback, clock);
         }
         log.info("AI Forecasting: Gemini redaction enabled (model {}, timeout {} ms)",
                 model, properties.getLlm().getTimeoutMs());
         return new GeminiRedactionAdapter(
+                GeminiRedactionAdapter.restTemplateWithTimeout(Duration.ofMillis(properties.getLlm().getTimeoutMs())),
+                apiKey, model, fallback, clock);
+    }
+
+    /**
+     * Mismo criterio que {@link #naturalLanguagePort}, con su propio interruptor
+     * ({@code llm.insights-enabled}): LLM apagado, análisis apagado o sin clave, reglas deterministas.
+     */
+    @Bean
+    PeriodInsightsPort periodInsightsPort(ForecastingProperties properties, InsightsFallbackPolicy fallback,
+                                          @Qualifier(CLOCK) Clock clock,
+                                          @Value("${gemini.api-key:}") String apiKey,
+                                          @Value("${gemini.model:" + DEFAULT_GEMINI_MODEL + "}") String model) {
+        if (!properties.insightsUseLlm() || apiKey == null || apiKey.isBlank()) {
+            log.info("AI Forecasting: period insights use deterministic rules (LLM or insights disabled, or no key)");
+            return new FallbackOnlyInsightsAdapter(fallback, clock);
+        }
+        log.info("AI Forecasting: Gemini period insights enabled (model {}, timeout {} ms)",
+                model, properties.getLlm().getTimeoutMs());
+        return new GeminiInsightsAdapter(
                 GeminiRedactionAdapter.restTemplateWithTimeout(Duration.ofMillis(properties.getLlm().getTimeoutMs())),
                 apiKey, model, fallback, clock);
     }
@@ -155,13 +211,48 @@ public class AiForecastingConfiguration {
     }
 
     @Bean
-    AssessmentQueryHandler assessmentQueryHandler(AssessmentRepository assessments) {
-        return new AssessmentQueryHandler(assessments);
+    OpenSessionAssessments openSessionAssessments(AssessmentRepository assessments, WorkerSnapshotRepository snapshots,
+                                                  ClosedSessionHistoryPort history, OpenSessionPort openSessions,
+                                                  @Qualifier(CLOCK) Clock clock) {
+        return new OpenSessionAssessments(assessments, snapshots, history, openSessions, clock);
     }
 
     @Bean
-    CriticalWorkersQueryHandler criticalWorkersQueryHandler(AssessmentRepository assessments) {
-        return new CriticalWorkersQueryHandler(assessments);
+    CloseEndedSessionAssessmentsHandler closeEndedSessionAssessmentsHandler(AssessmentRepository assessments,
+                                                                            OpenSessionAssessments openSessions,
+                                                                            @Qualifier(CLOCK) Clock clock) {
+        return new CloseEndedSessionAssessmentsHandler(assessments, openSessions, clock);
+    }
+
+    @Bean
+    AssessmentQueryHandler assessmentQueryHandler(AssessmentRepository assessments,
+                                                  OpenSessionAssessments openSessions) {
+        return new AssessmentQueryHandler(assessments, openSessions);
+    }
+
+    @Bean
+    CriticalWorkersQueryHandler criticalWorkersQueryHandler(OpenSessionAssessments openSessions) {
+        return new CriticalWorkersQueryHandler(openSessions);
+    }
+
+    @Bean
+    AnalyticsSummaryQueryHandler analyticsSummaryQueryHandler(ClosedSessionHistoryPort history,
+                                                              PositionCatalogPort positions,
+                                                              AssessmentRepository assessments,
+                                                              OpenSessionAssessments openSessions,
+                                                              ExposureAnalyticsCalculator calculator,
+                                                              @Qualifier(CLOCK) Clock clock) {
+        return new AnalyticsSummaryQueryHandler(history, positions, assessments, openSessions, calculator, clock);
+    }
+
+    @Bean
+    PeriodInsightsQueryHandler periodInsightsQueryHandler(AnalyticsSummaryQueryHandler summaries,
+                                                          PeriodInsightsPort insights,
+                                                          WorkerNamePort workerNames,
+                                                          InsightsFallbackPolicy fallback,
+                                                          @Qualifier(CLOCK) Clock clock) {
+        return new PeriodInsightsQueryHandler(summaries, insights, workerNames, fallback, clock,
+                PeriodInsightsQueryHandler.DEFAULT_TTL, PeriodInsightsQueryHandler.QUOTA_EXCEEDED_TTL);
     }
 
     @Bean

@@ -3,19 +3,21 @@ package com.emsafe.aiforecasting.application;
 import com.emsafe.aiforecasting.domain.model.AssessmentPriority;
 import com.emsafe.aiforecasting.domain.model.CriticalityLevel;
 import com.emsafe.aiforecasting.domain.model.PreventiveAssessment;
-import com.emsafe.aiforecasting.domain.ports.AssessmentRepository;
 import com.emsafe.aiforecasting.domain.ports.PageResult;
 import com.emsafe.shared.exception.BadRequestException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
-/** Evaluaciones activas de una organización, de la más urgente a la menos urgente. */
+/**
+ * Evaluaciones vigentes de una organización (jornadas que no terminaron, una por operario; ver
+ * {@link OpenSessionAssessments}), de la más urgente a la menos urgente.
+ */
 public class CriticalWorkersQueryHandler {
 
-    private final AssessmentRepository assessments;
+    private final OpenSessionAssessments assessments;
 
-    public CriticalWorkersQueryHandler(AssessmentRepository assessments) {
+    public CriticalWorkersQueryHandler(OpenSessionAssessments assessments) {
         this.assessments = assessments;
     }
 
@@ -31,7 +33,7 @@ public class CriticalWorkersQueryHandler {
             throw new BadRequestException("organizationId is required");
         }
         ForecastingPaging.validate(page, size);
-        List<PreventiveAssessment> sorted = assessments.findActiveByOrganizationId(organizationId).stream()
+        List<PreventiveAssessment> sorted = assessments.current(organizationId).stream()
                 .filter(a -> a.getCriticality() != null && a.getCriticality().isAtLeast(minCriticality))
                 .sorted(AssessmentPriority.MOST_URGENT_FIRST)
                 .toList();
