@@ -101,6 +101,21 @@ public class PersonalDosimetryController {
         return ApiResponse.ok(service.currentExposure(actor(auth)));
     }
 
+    @GetMapping("/workers/{workerId}/defaults")
+    @Operation(summary = "Puesto y dosímetro habituales de un operario",
+            description = "Operario titular, SSO de la empresa o ADMIN. Solo sugieren valores al iniciar la jornada.")
+    public ApiResponse<WorkerDefaults> defaults(Authentication auth, @PathVariable Long workerId) {
+        return ApiResponse.ok(service.workerDefaults(actor(auth), workerId));
+    }
+
+    @PutMapping("/workers/{workerId}/defaults")
+    @Operation(summary = "Fijar el puesto y el dosímetro habituales de un operario",
+            description = "SSO de la empresa o ADMIN. El dosímetro tiene que ser de la misma empresa; null los quita.")
+    public ApiResponse<WorkerDefaults> changeDefaults(Authentication auth, @PathVariable Long workerId,
+                                                      @Valid @RequestBody WorkerDefaults body) {
+        return ApiResponse.ok(service.changeWorkerDefaults(actor(auth), workerId, body));
+    }
+
     @GetMapping("/workers/{workerId}/sessions")
     @Operation(summary = "Historial paginado de jornadas de un operario",
             description = "Operario titular, SSO de la empresa o ADMIN.")

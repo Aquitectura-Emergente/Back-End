@@ -35,7 +35,8 @@ public class DosimetryOutboxImmediateRelay {
         DosimetryOutboxRelay target = relay.getIfAvailable();
         if (target == null) return;
         try {
-            target.exclusively(() -> tx.executeWithoutResult(status -> target.drainOnce()));
+            // Cada evento en su propia transacción: uno atascado no frena a los demás.
+            target.exclusively(() -> target.drainEachIsolated(tx));
         } catch (RuntimeException e) {
             log.warn("Immediate dosimetry relay failed, the scheduled pass will retry: {}", e.toString());
         }

@@ -6,6 +6,7 @@ import com.emsafe.devicemanagement.application.OrganizationCodeService.Organizat
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.AuditEntryView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DeviceConfigView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DeviceStatusView;
+import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DosimeterView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.EdgeNodeView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.TelemetryReadingView;
 import com.emsafe.devicemanagement.interfaces.rest.dto.DeviceManagementRequests.AssignOrganizationCode;
@@ -42,6 +43,13 @@ public class DeviceManagementController {
     @GetMapping("/devices/{deviceId}")
     public ResponseEntity<ApiResponse<DeviceStatusView>> status(@PathVariable String deviceId, Authentication auth) {
         return ResponseEntity.ok(ApiResponse.ok(service.status(actors.resolve(auth), deviceId)));
+    }
+
+    /** Dosímetros de la empresa (administrador o su responsable de SSO). */
+    @GetMapping("/organizations/{organizationId}/dosimeters")
+    public ResponseEntity<ApiResponse<List<DosimeterView>>> dosimeters(@PathVariable Long organizationId,
+                                                                        Authentication auth) {
+        return ResponseEntity.ok(ApiResponse.ok(service.dosimeters(actors.resolve(auth), organizationId)));
     }
 
     @GetMapping("/devices/{deviceId}/config")

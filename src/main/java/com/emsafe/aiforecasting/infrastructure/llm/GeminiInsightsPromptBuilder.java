@@ -19,7 +19,7 @@ import java.util.Map;
 
 /**
  * Prompt del "Análisis con IA" del periodo. Solo lleva datos agregados del resumen: conteos,
- * porcentajes, índices en uT·s, semanas ISO y horas. Operarios y puestos van con seudónimos de
+ * porcentajes, índices en µT·s, semanas ISO y horas. Operarios y puestos van con seudónimos de
  * {@link InsightsPseudonyms}; nunca IDs de organización, operario, puesto, sesión o evaluación,
  * nombres ni emails.
  */
@@ -27,7 +27,7 @@ final class GeminiInsightsPromptBuilder {
 
     static final String SYSTEM_INSTRUCTION = """
             Eres un asistente de seguridad ocupacional de EMSafe. Analizas el resumen de exposición a \
-            campos magnéticos de un periodo (índice magnético acumulado en uT·s y su porcentaje del límite \
+            campos magnéticos de un periodo (índice magnético acumulado en µT·s y su porcentaje del límite \
             por jornada) y escribes en español para el responsable de seguridad y salud ocupacional (SSO).
             Reglas:
             1. Usa SOLO los datos del mensaje. No inventes cifras, fechas, operarios ni puestos, y no \
@@ -39,7 +39,8 @@ final class GeminiInsightsPromptBuilder {
             4. Sugiere acciones preventivas concretas y justificadas por los datos: rotación, pausas, revisar \
             el puesto o el blindaje, reprogramar tareas, capacitación.
             5. El análisis es consultivo: la decisión es del SSO. No digas que ya se tomó ninguna acción.
-            6. Responde ÚNICAMENTE con un objeto JSON con esta forma:
+            6. Copia las cifras exactamente como se dan, con su separador de miles (por ejemplo 396,819 µT·s o 12,117 %%), y escribe la unidad como µT·s.
+            7. Responde ÚNICAMENTE con un objeto JSON con esta forma:
             {"resumen": "2 o 3 frases",
              "hallazgos": [{"texto": "...", "nivel": "INFO|ATENCION|CRITICO"}],
              "recomendaciones": [{"accion": "...", "motivo": "...", "prioridad": "ALTA|MEDIA|BAJA",
@@ -103,8 +104,8 @@ final class GeminiInsightsPromptBuilder {
         if (s.perWorker().isEmpty()) sb.append("- (sin datos)\n");
         for (WorkerStats w : s.perWorker()) {
             sb.append("- ").append(names.worker(w.workerId())).append(": ").append(w.sessions()).append("; ")
-                    .append(index(w.avgFinalIndex())).append(" uT·s; ").append(index(w.maxFinalIndex()))
-                    .append(" uT·s; ").append(ratio(w.maxRatio())).append("; ").append(w.sessionsAboveWarning())
+                    .append(index(w.avgFinalIndex())).append(" µT·s; ").append(index(w.maxFinalIndex()))
+                    .append(" µT·s; ").append(ratio(w.maxRatio())).append("; ").append(w.sessionsAboveWarning())
                     .append("; ").append(w.sessionsNearLimit()).append("; ").append(w.sessionsExceeded()).append('\n');
         }
 
@@ -121,8 +122,8 @@ final class GeminiInsightsPromptBuilder {
         if (s.topPositions().isEmpty()) sb.append("- (sin datos)\n");
         for (PositionStats p : s.topPositions()) {
             sb.append("- ").append(names.position(p.positionId())).append(": ").append(p.sessions()).append("; ")
-                    .append(index(p.avgFinalIndex())).append(" uT·s; ").append(index(p.maxFinalIndex()))
-                    .append(" uT·s\n");
+                    .append(index(p.avgFinalIndex())).append(" µT·s; ").append(index(p.maxFinalIndex()))
+                    .append(" µT·s\n");
         }
 
         sb.append("\nProyecciones actuales de jornadas abiertas con criticidad HIGH o CRITICAL (estimación ")
@@ -161,12 +162,23 @@ final class GeminiInsightsPromptBuilder {
         return Decimals.divide(p.currentIndex(), p.limitIndex());
     }
 
+    /** Índice redondeado y con separador de miles, como lo muestra el portal: 396,819. */
     private static String index(BigDecimal value) {
-        return value == null ? "s/d" : value.setScale(0, RoundingMode.HALF_UP).toPlainString();
+        return value == null ? "s/d" : grouped(value.setScale(0, RoundingMode.HALF_UP), "#,##0");
     }
 
+    /** Cociente como porcentaje legible: 12,117 % o 90.8 %. */
     private static String ratio(BigDecimal value) {
-        return value == null ? "s/d" : Decimals.percent(value) + " %";
+        if (value == null) return "s/d";
+        BigDecimal percent = new BigDecimal(Decimals.percent(value));
+        return grouped(percent, percent.abs().compareTo(BigDecimal.valueOf(100)) >= 0 ? "#,##0" : "#,##0.#") + " %";
+    }
+
+    private static String grouped(BigDecimal value, String pattern) {
+        java.text.DecimalFormat format = new java.text.DecimalFormat(pattern,
+                java.text.DecimalFormatSymbols.getInstance(java.util.Locale.US));
+        format.setRoundingMode(RoundingMode.HALF_UP);
+        return format.format(value);
     }
 
     private static String pct(BigDecimal value) {

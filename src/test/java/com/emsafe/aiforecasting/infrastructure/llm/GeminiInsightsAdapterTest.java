@@ -71,7 +71,7 @@ class GeminiInsightsAdapterTest {
             {"resumen": "El Operario A superó el límite una vez y el Operario B tiene una proyección CRITICAL.",
              "hallazgos": [
                {"texto": "Operario A: 1 jornada sobre el límite (103.00 %).", "nivel": "CRITICO"},
-               {"texto": "El Puesto A concentra el mayor índice promedio; el Puesto B le sigue.", "nivel": "ATENCION"},
+               {"texto": "El Puesto A concentra el mayor índice promedio; le sigue Puesto B.", "nivel": "ATENCION"},
                {"texto": "La tendencia semanal sube de 6000 a 7800 uT·s.", "nivel": "INFO"}],
              "recomendaciones": [
                {"accion": "Rotar al Operario D con el Operario C.", "motivo": "Proyección HIGH del Operario D.",
@@ -100,8 +100,8 @@ class GeminiInsightsAdapterTest {
                 .containsExactly(FindingLevel.CRITICO, FindingLevel.ATENCION, FindingLevel.INFO);
         assertThat(i.findings().get(0).text()).startsWith(NAME_1 + ":");
         assertThat(i.findings().get(1).text())
-                .isEqualTo("El Puesto " + POSITION_NAME + " concentra el mayor índice promedio; el Puesto " + P2
-                        + " le sigue.");
+                .isEqualTo("El puesto «" + POSITION_NAME + "» concentra el mayor índice promedio; le sigue el puesto #"
+                        + P2 + ".");
         assertThat(i.recommendations().get(0).priority()).isEqualTo(InsightPriority.ALTA);
         // con nombre, el artículo se ajusta ("al" → "a"); sin nombre, "operario #id"
         assertThat(i.recommendations().get(0).action()).isEqualTo("Rotar a " + NAME_4 + " con el Operario #" + W3 + ".");
@@ -138,12 +138,12 @@ class GeminiInsightsAdapterTest {
                     .doesNotContain("Lucía").doesNotContain("Secreta").doesNotContain("Oculto");
         }
         assertThat(prompt)
-                .contains("Operario A: 10; 9800 uT·s; 12360 uT·s; 103.00 %; 5; 2; 1")
-                .contains("Operario B: CRITICAL; índice actual 90.83 % del límite")
-                .contains("182.43 % del límite").contains("2026-11-22 11:47")
+                .contains("Operario A: 10; 9,800 µT·s; 12,360 µT·s; 103 %; 5; 2; 1")
+                .contains("Operario B: CRITICAL; índice actual 90.8 % del límite")
+                .contains("182 % del límite").contains("2026-11-22 11:47")
                 .contains("Operario D: HIGH").contains("ROTATION con Operario C")
-                .contains("Puesto A: 10; 9800 uT·s").contains("Puesto B: 20; 5500 uT·s")
-                .contains("2026-W47: 10; 7800; 12360; 2; 1")
+                .contains("Puesto A: 10; 9,800 µT·s").contains("Puesto B: 20; 5,500 µT·s")
+                .contains("2026-W47: 10; 7,800; 12,360; 2; 1")
                 .contains("Jornadas cerradas: 30; operarios: 3")
                 .contains("Con cobertura incompleta del dosímetro: 2")
                 .contains("Seudónimos válidos de operarios: Operario A, Operario B, Operario C, Operario D.")

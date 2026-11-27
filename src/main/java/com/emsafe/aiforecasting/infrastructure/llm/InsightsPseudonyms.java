@@ -97,7 +97,9 @@ final class InsightsPseudonyms {
 
     /**
      * Reemplaza cada seudónimo del texto: "al Operario A" pasa a "a Lucía Mendoza" (sin nombre, "al
-     * operario #14") y "el Puesto A" a "el Puesto Prensa hidráulica" (sin nombre, "el Puesto 31").
+     * operario #14") y "el Puesto A" o "en Puesto A" a "el puesto «Prensa hidráulica»" (sin nombre,
+     * "el puesto #31").
+     * El nombre del puesto va entre comillas porque suele ser una frase ("Operación planta demo").
      */
     String restore(String text, WorkerNames names) {
         Matcher m = ALIAS.matcher(text);
@@ -115,13 +117,25 @@ final class InsightsPseudonyms {
                 }
             } else {
                 PositionRef p = resolvePosition(m.group(3));
-                replacement = (article == null ? "" : article + " ") + prefix + " "
-                        + (p.positionName() == null ? p.positionId() : p.positionName());
+                // Sin artículo ("en Puesto B") se añade "el": "en el puesto «Prensa»".
+                String lead = article != null ? article : (startsSentence(text, m.start()) ? "El" : "el");
+                replacement = lead + " puesto "
+                        + (p.positionName() == null ? "#" + p.positionId() : "«" + p.positionName() + "»");
             }
             m.appendReplacement(out, Matcher.quoteReplacement(replacement));
         }
         m.appendTail(out);
         return out.toString();
+    }
+
+    /** Si en {@code index} empieza una frase: inicio del texto o tras punto, dos puntos, signos de exclamación o interrogación. */
+    private static boolean startsSentence(String text, int index) {
+        for (int i = index - 1; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (Character.isWhitespace(c)) continue;
+            return c == '.' || c == ':' || c == '!' || c == '?' || c == '¡' || c == '¿';
+        }
+        return true;
     }
 
     /** Ante un nombre propio: "el" desaparece, "al" pasa a "a" y "del" a "de". */

@@ -4,6 +4,7 @@ import com.emsafe.aiforecasting.application.commands.ExposureWarningRaisedComman
 import com.emsafe.aiforecasting.application.commands.UpsertExposureSnapshotCommand;
 import com.emsafe.occupationalhealth.application.events.EventEnvelope;
 import com.emsafe.occupationalhealth.application.events.inbound.ExposureSessionClosed;
+import com.emsafe.occupationalhealth.application.events.inbound.ExposureSessionOpened;
 import com.emsafe.occupationalhealth.application.events.inbound.ExposureWarningRaised;
 import com.emsafe.occupationalhealth.application.events.inbound.OccupationalLimitExceeded;
 import com.emsafe.personaldosimetry.domain.model.DosimetryEvent;
@@ -18,6 +19,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -156,11 +158,50 @@ public class DosimetryOutboxRelay {
         return delivered;
     }
 
+    /**
+     * Una pasada en la que cada evento se entrega y se confirma en su propia
+     * transacción. Así un evento que falla (y deja marcada su transacción para
+     * deshacerse) no arrastra a los demás de la pasada, como pasaba al envolver
+     * {@link #drainOnce()} entero en una sola transacción.
+     *
+     * @return eventos entregados
+     */
+    public int drainEachIsolated(TransactionTemplate tx) {
+        List<String> pending = tx.execute(status -> events
+                .findByPublishedAtIsNullAndEventTypeInOrderByOccurredAtAsc(DELIVERABLE, PageRequest.of(0, BATCH))
+                .getContent().stream().map(DosimetryEvent::getId).toList());
+        int delivered = 0;
+        for (String id : pending == null ? List.<String>of() : pending) {
+            try {
+                Boolean ok = tx.execute(status -> events.findById(id)
+                        .filter(event -> event.getPublishedAt() == null && deliver(event))
+                        .map(event -> {
+                            event.acknowledge(clock.instant());
+                            events.save(event);
+                            return true;
+                        })
+                        .orElse(false));
+                if (Boolean.TRUE.equals(ok)) delivered++;
+            } catch (RuntimeException e) {
+                // Su transacción quedó deshecha; la pasada programada lo reintentará.
+                log.warn("Could not deliver dosimetry event {}: {}", id, e.toString());
+            }
+        }
+        if (delivered > 0) {
+            log.info("Dosimetry relay delivered {} of {} pending event(s)", delivered, pending.size());
+        }
+        return delivered;
+    }
+
     private boolean deliver(DosimetryEvent event) {
         try {
             publisher.publishEvent(switch (event.getEventType()) {
                 case SESSION_CLOSED -> toSessionClosed(event);
-                case SESSION_OPENED -> toSnapshotUpsert(event);
+                case SESSION_OPENED -> {
+                    // Salud ocupacional abre el turno del operario (después del commit).
+                    publisher.publishEvent(toOccupationalHealthOpened(event));
+                    yield toSnapshotUpsert(event);
+                }
                 case WARNING_RAISED -> {
                     publisher.publishEvent(toOccupationalHealthWarning(event));
                     yield toWarningRaised(event);
@@ -237,6 +278,17 @@ public class DosimetryOutboxRelay {
     private EventEnvelope envelopeOf(DosimetryEvent event, Map<String, Object> payload) {
         return new EventEnvelope(event.getId(), schemaVersion(payload),
                 event.getOrganizationId(), utc(event.getOccurredAt()), event.getId(), null);
+    }
+
+    /** La jornada abierta, para que Occupational Health abra el turno en la zona del puesto. */
+    private ExposureSessionOpened toOccupationalHealthOpened(
+            DosimetryEvent event) {
+        Map<String, Object> payload = read(event);
+        return new ExposureSessionOpened(
+                envelopeOf(event, payload),
+                text(payload.get("sessionId")),
+                number(payload.get("workerId")),
+                number(payload.get("positionId")));
     }
 
     private OccupationalLimitExceeded toLimitExceeded(DosimetryEvent event) {
