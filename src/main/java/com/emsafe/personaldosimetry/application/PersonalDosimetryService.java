@@ -343,6 +343,35 @@ public class PersonalDosimetryService {
         return view(session);
     }
 
+    /** Puesto y dosímetro habituales del operario (los ve él, su SSO o un admin). */
+    @Transactional(readOnly = true)
+    public WorkerDefaults workerDefaults(DosimetryActor actor, Long workerId) {
+        var member = memberships.findById(workerId)
+                .orElseThrow(() -> new AccessDeniedException("Worker is outside the authorized scope"));
+        actor.requireRead(member.getOrganizationId(), workerId);
+        return new WorkerDefaults(member.getDefaultJobPositionId(), member.getDefaultDeviceId());
+    }
+
+    /**
+     * El SSO fija el puesto y el dosímetro habituales de un operario de su empresa.
+     * El dosímetro tiene que ser de la misma empresa; el puesto se comprueba al
+     * iniciar la jornada, que es cuando hace falta su límite vigente.
+     */
+    public WorkerDefaults changeWorkerDefaults(DosimetryActor actor, Long workerId, WorkerDefaults request) {
+        var member = memberships.findById(workerId)
+                .orElseThrow(() -> new AccessDeniedException("Worker is outside the authorized scope"));
+        actor.requireSupervisor(member.getOrganizationId());
+        if (request.deviceId() != null) {
+            var device = directory.deviceById(request.deviceId());
+            if (!member.getOrganizationId().equals(device.organizationId())) {
+                throw DosimetryRuleException.invalid("Dosimeter must belong to an active company");
+            }
+        }
+        member.setDefaults(request.jobPositionId(), request.deviceId());
+        memberships.save(member);
+        return new WorkerDefaults(member.getDefaultJobPositionId(), member.getDefaultDeviceId());
+    }
+
     @Transactional(readOnly = true)
     public PageResponse<DosimetryResources.Session> history(DosimetryActor actor, Long workerId, int page, int size) {
         var member = memberships.findById(workerId)

@@ -11,6 +11,8 @@ public final class DosimetryRequests {
     public record GrantMembership(@NotNull @Positive Long userId,
                                   @NotNull @Positive Long organizationId,
                                   @NotNull MembershipRole role) {}
+    /** Puesto y dosímetro habituales del operario; cualquiera puede ir nulo. */
+    public record WorkerDefaults(@Positive Long jobPositionId, @Positive Long deviceId) {}
     public record ConfigureLimit(@NotNull @Positive Long jobPositionId,
                                  @NotNull @DecimalMin(value = "0", inclusive = false) BigDecimal limitIndex,
                                  @NotNull @DecimalMin(value = "0", inclusive = false)
