@@ -5,8 +5,15 @@ import com.lowagie.text.pdf.PdfPCell;
 import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
 import com.emsafe.occupationalhealth.domain.model.*;
+import com.emsafe.occupationalhealth.domain.services.ReportNamesPort;
 import com.emsafe.occupationalhealth.domain.services.ReportRenderer;
 import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.util.Locale;
 
 import java.io.ByteArrayOutputStream;
 import java.time.format.DateTimeFormatter;
@@ -23,6 +30,12 @@ import java.util.List;
  */
 @Component
 public class PdfReportRenderer implements ReportRenderer {
+
+    private final ReportNamesPort names;
+
+    public PdfReportRenderer(ReportNamesPort names) {
+        this.names = names;
+    }
 
     private static final DateTimeFormatter STAMP =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -71,15 +84,15 @@ public class PdfReportRenderer implements ReportRenderer {
         PdfPTable meta = new PdfPTable(2);
         meta.setWidthPercentage(100);
         meta.setWidths(new float[]{1f, 3f});
-        addMeta(meta, "Alcance", r.getScope().name());
+        addMeta(meta, "Alcance", r.getScope() == ReportScope.WORKER ? "Por trabajador" : "Por zona de planta");
         if (r.getScope() == ReportScope.WORKER) {
-            addMeta(meta, "Trabajador", String.valueOf(r.getSubjectWorkerId()));
+            addMeta(meta, "Trabajador", person(r.getSubjectWorkerId()));
         }
         addMeta(meta, "Período", r.getPeriod().getFrom() + " a " + r.getPeriod().getTo()
                 + " (" + r.getPeriod().days() + " días)");
         addMeta(meta, "Versión", String.valueOf(r.getVersion()));
         addMeta(meta, "Generado", r.getGeneratedAt().format(STAMP)
-                + " por el usuario " + r.getGeneratedBy());
+                + " por " + person(r.getGeneratedBy()));
         addMeta(meta, "Entradas", String.valueOf(r.getEntries().size()));
         doc.add(meta);
         doc.add(new Paragraph(" ", BODY));
@@ -92,11 +105,11 @@ public class PdfReportRenderer implements ReportRenderer {
         PdfPTable table = new PdfPTable(5);
         table.setWidthPercentage(100);
         table.setWidths(new float[]{1.2f, 1.6f, 1f, 1f, 3f});
-        header(table, "Fecha", "Jornada", "Dosis", "% límite", "Origen");
+        header(table, "Fecha", "Ref. jornada", "Dosis", "% límite", "Origen");
 
         for (ReportEntry e : r.getEntries()) {
             cell(table, e.getEntryDate() != null ? e.getEntryDate().toString() : "—");
-            cell(table, e.getSessionId() != null ? e.getSessionId() : "—");
+            cell(table, shortRef(e.getSessionId()));
             cell(table, dose(e));
             cell(table, percentage(e));
             cell(table, sources(e.sourceReferences()));
@@ -117,11 +130,11 @@ public class PdfReportRenderer implements ReportRenderer {
 
         for (ReportEntry e : r.getEntries()) {
             ZoneAggregate z = e.getZoneAggregate();
-            cell(table, z != null ? String.valueOf(z.getZoneId()) : "—");
+            cell(table, z != null ? zone(z.getZoneId()) : "—");
             cell(table, z != null && z.getAverageValue() != null
-                    ? z.getAverageValue().toPlainString() : "—");
+                    ? number(z.getAverageValue(), "#,##0.##") : "—");
             cell(table, z != null && z.getMaxValue() != null
-                    ? z.getMaxValue().toPlainString() : "—");
+                    ? number(z.getMaxValue(), "#,##0.##") : "—");
             cell(table, z != null && z.getReadingCount() != null
                     ? String.valueOf(z.getReadingCount()) : "—");
         }
@@ -132,8 +145,7 @@ public class PdfReportRenderer implements ReportRenderer {
     private void writeTraceNotes(Document doc, ComplianceReport r) throws DocumentException {
         List<String> notes = r.getEntries().stream()
                 .flatMap(e -> e.getTraceNotes().stream()
-                        .map(n -> (e.getSessionId() != null ? e.getSessionId() : "—")
-                                + ": " + n.getCause()))
+                        .map(n -> "Jornada " + shortRef(e.getSessionId()) + ": " + n.getCause()))
                 .toList();
         if (notes.isEmpty()) return;
 
@@ -182,18 +194,53 @@ public class PdfReportRenderer implements ReportRenderer {
     private String dose(ReportEntry e) {
         DoseSnapshot d = e.getFinalDose();
         if (d == null || d.getValue() == null) return "—";
-        return d.getValue().toPlainString() + " " + (d.getUnit() != null ? d.getUnit() : "");
+        return number(d.getValue(), "#,##0") + " " + unit(d.getUnit());
     }
 
     private String percentage(ReportEntry e) {
         DoseSnapshot d = e.getFinalDose();
-        return (d == null || d.getPercentage() == null) ? "—" : d.getPercentage() + " %";
+        return (d == null || d.getPercentage() == null) ? "—" : number(d.getPercentage(), "#,##0.#") + " %";
     }
 
+    /** De dónde sale cada cifra, en palabras y con referencias cortas. */
     private String sources(List<ReportEntrySource> sources) {
-        if (sources.isEmpty()) return "SIN REFERENCIA";
-        StringBuilder sb = new StringBuilder();
-        sources.forEach(s -> sb.append(s.getType()).append(' ').append(s.getRef()).append("  "));
-        return sb.toString().trim();
+        if (sources.isEmpty()) return "Sin referencia";
+        List<String> parts = sources.stream().map(s -> switch (s.getType()) {
+            case SESSION -> "Jornada " + shortRef(s.getRef());
+            case EXCEEDANCE -> "Excedencia " + shortRef(s.getRef());
+            case ALERT -> "Alerta " + shortRef(s.getRef());
+            case ACTION -> "Medida #" + s.getRef();
+        }).distinct().toList();
+        return String.join(" · ", parts);
+    }
+
+    private String person(Long userId) {
+        if (userId == null) return "—";
+        return names.personName(userId).orElse("usuario #" + userId);
+    }
+
+    private String zone(Long zoneId) {
+        if (zoneId == null) return "—";
+        return names.zoneName(zoneId).orElse("zona #" + zoneId);
+    }
+
+    /**
+     * Los primeros 8 caracteres de un UUID: basta para cruzarlo con el sistema
+     * y no ocupa media página. Los ids numéricos van enteros.
+     */
+    private static String shortRef(String ref) {
+        if (ref == null || ref.isBlank()) return "—";
+        return ref.length() > 12 && ref.charAt(8) == '-' ? ref.substring(0, 8) : ref;
+    }
+
+    /** El backend guarda la unidad en ASCII ("uT*s"); en el documento se escribe µT·s. */
+    private static String unit(String unit) {
+        return unit == null ? "" : unit.replace("uT", "µT").replace('*', '·');
+    }
+
+    private static String number(BigDecimal value, String pattern) {
+        DecimalFormat format = new DecimalFormat(pattern, DecimalFormatSymbols.getInstance(Locale.US));
+        format.setRoundingMode(RoundingMode.HALF_UP);
+        return format.format(value);
     }
 }
