@@ -124,8 +124,12 @@ del intervalo de la jornada.
 
 6. POST /sessions/{id}/finalize con {"deliveryConfirmed":true} representa una confirmación
 explícita del envío pendiente por el flujo autorizado del prototipo. Con false, se exige
-que hayan pasado 30 minutos desde endedAt. La finalización es explícita: no se añade un
-planificador que cierre jornadas automáticamente.
+que hayan pasado 30 minutos desde endedAt (`reconciliationDeadline`). Además, la tarea
+programada `DosimetryReconciliationJob` (cada 60 s por defecto, en lotes de 50; configurable
+con `emsafe.personal-dosimetry.reconciliation-enabled`, `reconciliation-delay-ms` y
+`reconciliation-batch-size`) finaliza automáticamente con `deliveryConfirmed=false` las
+jornadas `CLOSING` cuyo `reconciliationDeadline` ya venció, emitiendo `ExposureSessionClosed`
+(sin `finalizedBy`, omitido por `non_null`).
 
 CLOSED congela acumulado, límite y cobertura. Las capturas nuevas del intervalo que llegan
 después se conservan como LATE y no cambian ese resultado. La confirmación de entrega no
@@ -138,6 +142,10 @@ el porcentaje redondeado.
 - `V17__personal_dosimetry_access_audit.sql` añade la auditoría de accesos denegados.
 - `V26__personal_reading_saturation.sql` añade la bandera `saturated` en lecturas y el
   contador `out_of_range_readings` en jornadas.
+- `V30__personal_exposure_sessions_ended_index.sql` añade los índices
+  `ix_pd_session_org_state_ended (organization_id, state, ended_at)` para analítica de
+  jornadas cerradas y `ix_pd_session_reconciliation (state, reconciliation_deadline)` para
+  la finalización programada de jornadas en reconciliación.
 
 En `main`, `V13` corresponde a `user_organization` y `V19–V21` a Occupational Health
 (`V14–V15` no existen en `main`).
