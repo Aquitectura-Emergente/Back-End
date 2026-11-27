@@ -281,26 +281,51 @@ public class PersonalDosimetryService {
         var session = locked(id);
         actor.requireSupervisor(session.getOrganizationId());
         if (session.getState() == ExposureSession.State.CLOSED) return view(session);
-        session.finalizeSession(now(), request != null && request.deliveryConfirmed());
+        Instant finalizedAt = now();
+        session.finalizeSession(finalizedAt, request != null && request.deliveryConfirmed());
         sessions.saveAndFlush(session);
-        // Map.ofEntries y no Map.of: son once pares y Map.of admite diez.
-        // unit, limitIndex, methodId y finalizedAt se añadieron el 2026-11-12
-        // porque el inbox de Occupational Health los exige para dejar constancia
-        // en un reporte de cumplimiento, y sin ellos ese hecho no se podía
-        // entregar. Son los mismos nombres que ya usa OccupationalLimitExceeded.
-        emit(session.getOrganizationId(), "ExposureSessionClosed",
-                Map.ofEntries(Map.entry("sessionId", id),
-                        Map.entry("workerId", session.getWorkerId()),
-                        Map.entry("accumulatedIndex", session.getAccumulatedIndex()),
-                        Map.entry("limitIndex", session.getLimitIndex()),
-                        Map.entry("limitVersionId", session.getLimitVersionId()),
-                        Map.entry("coveragePercentage", session.coverage(now())),
-                        Map.entry("coverageComplete", session.coverageComplete()),
-                        Map.entry("finalizedBy", actor.userId()),
-                        Map.entry("finalizedAt", now()),
-                        Map.entry("methodId", ExposureIndex.METHOD),
-                        Map.entry("unit", ExposureIndex.UNIT)), now());
+        emitSessionClosed(session, actor.userId(), finalizedAt);
         return view(session);
+    }
+
+    /**
+     * Finaliza con {@code deliveryConfirmed = false} una jornada {@code CLOSING}
+     * cuyo {@code reconciliationDeadline} ya venció. Idempotente: si ya pasó a
+     * {@code CLOSED} (por ejemplo, por una llamada manual concurrente) o todavía
+     * no venció el plazo, devuelve {@code false} sin emitir eventos duplicados.
+     */
+    public boolean finalizeExpiredClosingSession(String id) {
+        var found = sessions.findLocked(id);
+        if (found.isEmpty()) return false;
+        var session = found.get();
+        if (session.getState() != ExposureSession.State.CLOSING) return false;
+        Instant finalizedAt = now();
+        if (session.getReconciliationDeadline() == null
+                || finalizedAt.isBefore(session.getReconciliationDeadline())) {
+            return false;
+        }
+        session.finalizeSession(finalizedAt, false);
+        sessions.saveAndFlush(session);
+        emitSessionClosed(session, null, finalizedAt);
+        return true;
+    }
+
+    private void emitSessionClosed(ExposureSession session, Long finalizedBy, Instant finalizedAt) {
+        // LinkedHashMap y no Map.ofEntries: cuando finaliza la tarea programada
+        // (DosimetryReconciliationJob), finalizedBy es null y Map.entry lo rechazaría.
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("sessionId", session.getId());
+        payload.put("workerId", session.getWorkerId());
+        payload.put("accumulatedIndex", session.getAccumulatedIndex());
+        payload.put("limitIndex", session.getLimitIndex());
+        payload.put("limitVersionId", session.getLimitVersionId());
+        payload.put("coveragePercentage", session.coverage(finalizedAt));
+        payload.put("coverageComplete", session.coverageComplete());
+        payload.put("finalizedBy", finalizedBy);
+        payload.put("finalizedAt", finalizedAt);
+        payload.put("methodId", ExposureIndex.METHOD);
+        payload.put("unit", ExposureIndex.UNIT);
+        emit(session.getOrganizationId(), "ExposureSessionClosed", payload, finalizedAt);
     }
 
     @Transactional(readOnly = true)

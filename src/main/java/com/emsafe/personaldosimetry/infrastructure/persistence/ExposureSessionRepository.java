@@ -53,4 +53,18 @@ public interface ExposureSessionRepository extends JpaRepository<ExposureSession
     java.util.List<ExposureSession> findEndedBetween(@Param("organizationId") Long organizationId,
                                                      @Param("state") ExposureSession.State state,
                                                      @Param("from") Instant from, @Param("to") Instant to);
+
+    /**
+     * Identificadores de jornadas en reconciliación ({@code CLOSING}) cuyo
+     * {@code reconciliationDeadline} ya venció ({@code <= now}), de la más antigua
+     * a la última (la usa DosimetryReconciliationJob).
+     */
+    @Query("""
+            select s.id from ExposureSession s
+            where s.state = :state and s.reconciliationDeadline <= :now
+            order by s.reconciliationDeadline asc, s.id asc
+            """)
+    java.util.List<String> findExpiredReconciliationIds(@Param("state") ExposureSession.State state,
+                                                        @Param("now") Instant now,
+                                                        Pageable pageable);
 }

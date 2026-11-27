@@ -9,9 +9,15 @@ import java.time.Duration;
 import java.time.Instant;
 
 @Entity
-@Table(name = "personal_exposure_sessions", uniqueConstraints = {
-        @UniqueConstraint(name = "uk_pd_active_worker", columnNames = "active_worker_id"),
-        @UniqueConstraint(name = "uk_pd_active_device", columnNames = "active_device_id")})
+@Table(name = "personal_exposure_sessions",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_pd_active_worker", columnNames = "active_worker_id"),
+                @UniqueConstraint(name = "uk_pd_active_device", columnNames = "active_device_id")},
+        indexes = {
+                @Index(name = "ix_pd_session_org_state_ended",
+                        columnList = "organization_id, state, ended_at"),
+                @Index(name = "ix_pd_session_reconciliation",
+                        columnList = "state, reconciliation_deadline")})
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ExposureSession {

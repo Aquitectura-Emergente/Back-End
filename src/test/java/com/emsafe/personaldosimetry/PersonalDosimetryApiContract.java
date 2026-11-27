@@ -685,4 +685,58 @@ abstract class PersonalDosimetryApiContract {
                 .findFirst().orElseThrow();
         assertThat(exceeded.getPayload()).contains("\"limitVersionId\":" + stricterLimit.getId());
     }
+
+    @Test
+    void scheduledReconciliationFinalizesExpiredClosingSessionsInBatchesIdempotentlyAndFeedsClosedHistory() {
+        // Dos jornadas que cierran sucesivamente con el mismo operario y dosímetro (liberan active_* al pasar a CLOSING),
+        // una tercera aún dentro de sus 30 minutos de reconciliación y una cuarta que sigue OPEN.
+        String expiredFirst = service.openSession(sso(), new OpenSession(worker.getId(), device.getId(), 1L, START)).id();
+        service.ingest(sso(), expiredFirst, capture(1, "10", 0, 5)); // 50 uT*s
+        service.requestClose(sso(), expiredFirst, new CloseSession(START.plusSeconds(10))); // deadline = START + 1810 s
+
+        String expiredSecond = service.openSession(sso(),
+                new OpenSession(worker.getId(), device.getId(), 1L, START.plusSeconds(11))).id();
+        service.ingest(sso(), expiredSecond, capture(2, "12", 11, 16)); // 60 uT*s
+        service.requestClose(sso(), expiredSecond, new CloseSession(START.plusSeconds(20))); // deadline = START + 1820 s
+
+        String stillWithinWindow = service.openSession(sso(),
+                new OpenSession(worker.getId(), device.getId(), 1L, START.plusSeconds(21))).id();
+        service.requestClose(sso(), stillWithinWindow, new CloseSession(START.plusSeconds(100))); // deadline = START + 1900 s
+
+        String stillOpen = service.openSession(sso(),
+                new OpenSession(worker.getId(), device.getId(), 1L, START.plusSeconds(101))).id();
+
+        // Avanzamos el reloj al borde exacto de expiredSecond (START + 1820 s):
+        // expiredFirst (< now) y expiredSecond (== now) vencieron; stillWithinWindow aún no.
+        when(clock.instant()).thenReturn(START.plusSeconds(1820));
+
+        var job = new com.emsafe.personaldosimetry.infrastructure.DosimetryReconciliationJob(
+                sessions, service, clock, 1);
+
+        assertThat(job.reconcileOnce()).isEqualTo(1);
+        assertThat(service.getSession(sso(), expiredFirst).state()).isEqualTo(ExposureSession.State.CLOSED);
+        assertThat(service.getSession(sso(), expiredSecond).state()).isEqualTo(ExposureSession.State.CLOSING);
+
+        assertThat(job.reconcileOnce()).isEqualTo(1);
+        assertThat(service.getSession(sso(), expiredSecond).state()).isEqualTo(ExposureSession.State.CLOSED);
+
+        // Tercera pasada e invocación directa repetida: idempotente, no duplica eventos ni toca las vigentes.
+        assertThat(job.reconcileOnce()).isEqualTo(0);
+        assertThat(service.finalizeExpiredClosingSession(expiredFirst)).isFalse();
+        assertThat(service.getSession(sso(), stillWithinWindow).state()).isEqualTo(ExposureSession.State.CLOSING);
+        assertThat(service.getSession(sso(), stillOpen).state()).isEqualTo(ExposureSession.State.OPEN);
+
+        var closedEvents = events.findAll().stream()
+                .filter(e -> e.getEventType().equals("ExposureSessionClosed"))
+                .toList();
+        assertThat(closedEvents).hasSize(2);
+        assertThat(closedEvents).allSatisfy(e -> {
+            assertThat(e.getPayload()).doesNotContain("\"finalizedBy\"");
+            assertThat(e.getPayload()).contains("\"finalizedAt\":\"2026-11-10T12:20:20Z\"");
+        });
+
+        var history = exposureQueryFacade.closedSessions(company.getId(), START, START.plusSeconds(200));
+        assertThat(history).extracting(ExposureQueryFacade.ClosedSession::sessionId)
+                .containsExactly(expiredFirst, expiredSecond);
+    }
 }
