@@ -9,6 +9,7 @@ import com.emsafe.shared.exception.ResourceNotFoundException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ public class PersonalDosimetryService {
     private final DosimetryDirectory directory;
     private final ObjectMapper json;
     private final Clock clock;
+    private final ApplicationEventPublisher publisher;
 
     public DosimetryResources.Membership grantMembership(DosimetryActor actor, GrantMembership request) {
         actor.requireAdministrator();
@@ -375,6 +377,7 @@ public class PersonalDosimetryService {
         payload.put("organizationId", organizationId);
         try {
             events.saveAndFlush(new DosimetryEvent(organizationId, type, json.writeValueAsString(payload), occurredAt));
+            publisher.publishEvent(new DosimetryEventRecorded(type));
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Could not serialize dosimetry event", ex);
         }

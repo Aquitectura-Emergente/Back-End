@@ -114,12 +114,20 @@ public class DosimetryOutboxRelay {
     }
 
     @Scheduled(fixedDelayString = "${emsafe.personal-dosimetry.outbox-relay-delay-ms:30000}")
-    public void drainScheduled() {
+    public synchronized void drainScheduled() {
         try {
             drainOnce();
         } catch (RuntimeException e) {
             log.warn("Dosimetry outbox relay pass failed: {}", e.toString());
         }
+    }
+
+    /**
+     * Ejecuta una pasada sin solaparse con la programada, para que las dos no
+     * entreguen el mismo evento a la vez.
+     */
+    public synchronized void exclusively(Runnable pass) {
+        pass.run();
     }
 
     /**
