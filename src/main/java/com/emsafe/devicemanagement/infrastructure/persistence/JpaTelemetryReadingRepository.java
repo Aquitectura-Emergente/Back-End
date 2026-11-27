@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -33,5 +34,13 @@ public class JpaTelemetryReadingRepository implements TelemetryReadingRepository
         return routing == null
                 ? readings.findByDeviceSerialOrderByCapturedAtDescIdDesc(serialNumber, page)
                 : readings.findByDeviceSerialAndRoutingOrderByCapturedAtDescIdDesc(serialNumber, routing, page);
+    }
+
+    @Override
+    public Optional<TelemetryReading> findLatestBefore(String serialNumber, ReadingRouting routing, Instant before) {
+        return routing == null
+                ? readings.findFirstByDeviceSerialAndCapturedAtLessThanOrderByCapturedAtDescIdDesc(serialNumber, before)
+                : readings.findFirstByDeviceSerialAndRoutingAndCapturedAtLessThanOrderByCapturedAtDescIdDesc(
+                        serialNumber, routing, before);
     }
 }
