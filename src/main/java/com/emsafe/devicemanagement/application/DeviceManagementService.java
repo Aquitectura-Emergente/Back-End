@@ -3,6 +3,9 @@ package com.emsafe.devicemanagement.application;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.AuditEntryView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DeviceConfigView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DeviceStatusView;
+import com.emsafe.devicemanagement.application.views.DeviceManagementViews.DosimeterView;
+import com.emsafe.devicemanagement.application.ports.DosimetrySessionGateway;
+import com.emsafe.devicemanagement.domain.model.DeviceType;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.EdgeNodeView;
 import com.emsafe.devicemanagement.application.views.DeviceManagementViews.TelemetryReadingView;
 import com.emsafe.devicemanagement.domain.model.AlertThreshold;
@@ -39,6 +42,7 @@ public class DeviceManagementService {
     private final DeviceAuditRepository audit;
     private final TelemetryReadingRepository readings;
     private final EdgeNodeRepository edges;
+    private final DosimetrySessionGateway sessions;
     private final Clock clock;
 
     @Transactional(readOnly = true)
@@ -46,6 +50,21 @@ public class DeviceManagementService {
         Device device = require(deviceId);
         actor.requireRead(device.organizationId());
         return DeviceStatusView.from(device);
+    }
+
+    /**
+     * Dosímetros personales de una empresa que siguen en servicio, para que su
+     * responsable de SSO elija uno al iniciar una jornada.
+     */
+    @Transactional(readOnly = true)
+    public List<DosimeterView> dosimeters(DeviceActor actor, Long organizationId) {
+        actor.requireRead(organizationId);
+        var now = clock.instant();
+        return devices.findByClient(organizationId).stream()
+                .filter(d -> d.getDeviceType() == DeviceType.PERSONAL_DOSIMETER)
+                .filter(d -> d.getLifecycleStatus() != DeviceLifecycleStatus.RETIRED)
+                .map(d -> new DosimeterView(DeviceStatusView.from(d), sessions.sessionCovering(d.getId(), now).isPresent()))
+                .toList();
     }
 
     @Transactional(readOnly = true)

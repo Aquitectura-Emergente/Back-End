@@ -16,6 +16,9 @@ public final class DeviceManagementViews {
     private DeviceManagementViews() {
     }
 
+    /** Dosímetro de la empresa y si ya está en una jornada (no se puede asignar a otra). */
+    public record DosimeterView(DeviceStatusView device, boolean inSession) {}
+
     public record DeviceStatusView(Long id, String deviceId, String deviceType, String lifecycleStatus,
                                    String operationalStatus, String connectivity, Instant connectivityChangedAt,
                                    String connectivityEdgeNodeId, Instant lastSeenAt, String firmwareVersion,
