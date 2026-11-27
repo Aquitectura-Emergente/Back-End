@@ -1,6 +1,7 @@
 package com.emsafe.devicemanagement.application;
 
 import com.emsafe.devicemanagement.application.ports.AccountDirectory;
+import com.emsafe.devicemanagement.application.ports.DeviceAlertGateway;
 import com.emsafe.devicemanagement.application.ports.DosimetrySessionGateway;
 import com.emsafe.devicemanagement.application.ports.DosimetrySessionGateway.DosimetryReading;
 import com.emsafe.devicemanagement.application.ports.DosimetrySessionGateway.DosimetryResult;
@@ -19,6 +20,7 @@ import com.emsafe.devicemanagement.domain.model.OrganizationCode;
 import com.emsafe.devicemanagement.domain.model.ReadingAttribution;
 import com.emsafe.devicemanagement.domain.model.ReadingIdentity;
 import com.emsafe.devicemanagement.domain.model.ReadingQuality;
+import com.emsafe.devicemanagement.domain.model.ReadingRouting;
 import com.emsafe.devicemanagement.domain.model.SyncOrigin;
 import com.emsafe.devicemanagement.domain.model.TelemetryReading;
 import com.emsafe.devicemanagement.domain.repositories.DeviceRepository;
@@ -33,6 +35,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -62,6 +65,7 @@ public class TelemetryIngestionService {
     private final HomeReadingGateway home;
     private final HomeReadingNotifier notifier;
     private final DomainEventOutbox outbox;
+    private final DeviceAlertGateway alerts;
     private final Clock clock;
     private final boolean lendingAllowed;
     private Supplier<BootId> bootIds = BootId::random;
@@ -70,7 +74,7 @@ public class TelemetryIngestionService {
                                      EdgeNodeRepository edges, OrganizationCodeRepository organizations,
                                      AccountDirectory accounts, DosimetrySessionGateway dosimetry,
                                      HomeReadingGateway home, HomeReadingNotifier notifier, DomainEventOutbox outbox,
-                                     Clock clock,
+                                     DeviceAlertGateway alerts, Clock clock,
                                      @Value("${emsafe.device-management.allow-device-lending:false}") boolean lendingAllowed) {
         this.devices = devices;
         this.readings = readings;
@@ -81,6 +85,7 @@ public class TelemetryIngestionService {
         this.home = home;
         this.notifier = notifier;
         this.outbox = outbox;
+        this.alerts = alerts;
         this.clock = clock;
         this.lendingAllowed = lendingAllowed;
     }
@@ -193,7 +198,14 @@ public class TelemetryIngestionService {
                     device.getSerialNumber(), reading.getCapturedAt());
             return;
         }
+        // El intervalo cubre desde la lectura anterior, como mucho un muestreo
+        // hacia atrás: una lectura adelantada (el dosímetro envía al superar su
+        // umbral) no debe solaparse con la anterior, o dosimetría la rechaza.
         Instant from = reading.getCapturedAt().minus(device.config().samplingInterval().duration());
+        Instant previousTo = readings.findLatestBefore(device.getSerialNumber(), ReadingRouting.ASSIGNED_TO_SESSION,
+                reading.getCapturedAt()).map(TelemetryReading::getCapturedAt).orElse(null);
+        if (previousTo != null && previousTo.isAfter(from)) from = previousTo;
+        alertIfOverThreshold(device, reading, session.get());
         DosimetryResult result = dosimetry.ingest(session.get(), new DosimetryReading(device.getId(),
                 reading.getBootId(), reading.getSequenceNumber(), reading.getFluxUt(), from, reading.getCapturedAt(),
                 reading.isSaturated()));
@@ -203,6 +215,28 @@ public class TelemetryIngestionService {
                     reading.getSequenceNumber(), result.detail());
         } else {
             reading.assignToSession(session.get(), result.readingRef());
+        }
+    }
+
+    /**
+     * Avisa al operario cuando una lectura en tiempo real cruza el umbral del
+     * dosímetro. Solo al cruzar: mientras siga alto no se repite el aviso.
+     */
+    private void alertIfOverThreshold(Device device, TelemetryReading reading, String sessionId) {
+        if (reading.getOrigin() != SyncOrigin.REALTIME || device.organizationId() == null) return;
+        BigDecimal threshold = device.config().alertThreshold().microtesla();
+        if (reading.getFluxUt().compareTo(threshold) < 0) return;
+        boolean wasOver = readings.findLatestBefore(device.getSerialNumber(), null, reading.getCapturedAt())
+                .map(prev -> prev.getFluxUt().compareTo(threshold) >= 0).orElse(false);
+        if (wasOver) return;
+        Long workerId = dosimetry.workerOf(sessionId).orElse(null);
+        if (workerId == null) return;
+        try {
+            alerts.dosimeterThresholdExceeded(device.organizationId(), workerId, sessionId, device.getSerialNumber(),
+                    reading.getFluxUt(), threshold, reading.getCapturedAt());
+        } catch (RuntimeException e) {
+            // El aviso no debe impedir guardar la lectura.
+            log.warn("Threshold alert for {} not raised: {}", device.getSerialNumber(), e.toString());
         }
     }
 
