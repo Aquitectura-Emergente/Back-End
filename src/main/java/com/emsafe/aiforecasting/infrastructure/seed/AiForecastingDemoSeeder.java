@@ -172,8 +172,12 @@ public class AiForecastingDemoSeeder {
                 case NONE -> { }
             }
         }
-        List<String> history = historyAlreadySeeded(org, participants, now)
-                ? List.of() : seedHistory(actor, participants, busy, now);
+        // Personal Dosimetry entrega los avisos apenas se confirma cada jornada, en este mismo hilo:
+        // el historial se siembra ya con redacción por plantilla para que tampoco llegue al LLM.
+        List<String> history = new ArrayList<>();
+        if (!historyAlreadySeeded(org, participants, now)) {
+            TemplateOnlyRedaction.run(() -> history.addAll(seedHistory(actor, participants, busy, now)));
+        }
         int settled = history.isEmpty() ? 0 : settleHistoricalAlerts(participants, Set.copyOf(history));
         // Las evaluaciones que dejan los avisos del historial son de jornadas ya cerradas: se cierran
         // con SESSION_ENDED ahora, sin esperar a la tarea programada.
